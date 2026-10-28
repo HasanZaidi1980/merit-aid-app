@@ -5,6 +5,8 @@ import { getMeta, getColleges, getRagStatus, askRag } from './api.js';
 const NAVY = '#1E2761', GREEN = '#2C7A4B', RED = '#c2453b';
 const fmt$ = (v) => v == null ? '—' : '$' + Math.round(v).toLocaleString();
 const pct = (v) => v == null ? '—' : (v * 100).toFixed(0) + '%';
+// DATA_GAPS markers are display-only — a gap never drops a college from the ranking.
+const GAP_LABELS = { no_sat: 'no SAT', no_admit_rate: 'no admit rate' };
 
 export default function App() {
   const [meta, setMeta] = useState(null);
@@ -122,12 +124,16 @@ export default function App() {
     ['COA', 'Sticker'], ['IGRNT_A', 'Avg Grant'], ['NET_PRICE_MID', 'Net'],
     ['DISCOUNT', 'Discount'], ['ADMISSIONS_RATE', 'Admit'], ['GRAD_RATE', 'Grad'],
     ['SAT_TOTAL_75', 'SAT 75'], ['AID_SHARE', 'Aid Share'], ['VALUE_SCORE', 'Value'],
-    ['COMPOSITE_LEGACY', 'Legacy'],
+    ['COMPOSITE_LEGACY', 'Legacy'], ['DATA_GAPS', 'Gaps', 'l'],
   ];
   const cell = (r, k) => {
     if (['COA', 'IGRNT_A', 'NET_PRICE_MID', 'DISCOUNT'].includes(k)) return fmt$(r[k]);
     if (['ADMISSIONS_RATE', 'GRAD_RATE', 'AID_SHARE'].includes(k)) return pct(r[k]);
     if (['VALUE_SCORE', 'COMPOSITE_LEGACY'].includes(k)) return r[k]?.toFixed(1) ?? '—';
+    if (k === 'DATA_GAPS') {
+      const gaps = (r[k] || '').split(',').filter(Boolean);
+      return gaps.length ? gaps.map((g) => GAP_LABELS[g] ?? g).join(', ') : '—';
+    }
     return r[k] ?? '—';
   };
 
@@ -160,13 +166,20 @@ export default function App() {
         <label className="toggle">
           <input type="checkbox" checked={filters.mgiMedian}
             onChange={() => setFilters({ ...filters, mgiMedian: !filters.mgiMedian })} />
-          MGI ≥ median
+          {/* Show the threshold actually applied. median_aid_share is a different
+              ratio (grant / COA), so it can't stand in for it here. */}
+          MGI ≥ median{meta.median_mgi != null ? ` (${meta.median_mgi.toFixed(2)})` : ''}
         </label>
         <label className="toggle">
           <input type="checkbox" checked={filters.excludeFlagged}
             onChange={() => setFilters({ ...filters, excludeFlagged: !filters.excludeFlagged })} />
           Exclude flagged
         </label>
+        <p className="hint">
+          Drops only colleges whose ranking is unreliable — a partly reconstructed
+          sticker price. A missing SAT or admissions rate never removes a college;
+          those show up in the Gaps column instead.
+        </p>
       </aside>
 
       <main className="main">
