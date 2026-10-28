@@ -26,16 +26,17 @@ owning doc when a fact changes.
 | Runs locally | ✅ Done | Docker (`docker compose up --build`) and direct (uvicorn + vite). |
 | Backend API | ✅ Working | All 5 endpoints verified; 24-field rows. |
 | Frontend | ✅ Working | 5 charts, sortable table, CSV export, RAG panel. |
-| RAG / AI | ⚠️ Works, degraded | Runs on TF-IDF fallback, not embeddings. Live Claude answers confirmed. |
-| Scoring logic | ⚠️ Partly validated | 6 issues resolved + tested; **4 still open** (see `PROJECT_BRIEF.md` §6). COA is the last unexplained gap vs the reference. |
+| RAG / AI | ❌ **Non-functional** | No real mission source exists (see Phase 4). Index holds sample UNITIDs; every query now returns nothing. |
+| Scoring logic | ⚠️ Validated on real data | 6 issues resolved + tested; **4 still open** (see `PROJECT_BRIEF.md` §6). COA is the one remaining unexplained gap. |
 | Tests | ⚠️ Partial | 9 tests over scoring, flags and net-price coalescing. No endpoint tests. |
-| **Real data** | ❌ **Not yet** | Still 300 synthetic colleges. Download in progress (Cowork). |
+| **Real data** | ✅ **Installed & validated** | Real IPEDS 2022-23: 1,907 colleges (726 public / 1,095 private nonprofit / 86 for-profit). 5 of 5 reference metrics match. |
 | Error handling | ❌ Missing | Backend failure = permanent "Loading…" spinner. |
 | Deployment | ❌ Not started | Terraform + K8s manifests exist, never applied. |
 
-**One-line summary:** the app is built, version-controlled and demonstrably working,
-but it is still running on fake data and would fail silently in front of a user if the
-backend hiccuped. Those two things are the gate to everything else.
+**One-line summary:** the app runs on real, validated IPEDS data and produces defensible
+rankings — Stanford #1 at $77,662 sticker against a $7,332 net price for a mid-income
+family, which is exactly the thesis. What remains is the COA question, a UI that fails
+silently when the backend does, and a RAG panel with no real data source.
 
 ---
 
@@ -99,44 +100,54 @@ Settled. Don't relitigate without a reason.
 
 Phases are ordered by dependency. Each has a **Done when** you can actually check.
 
-### Phase 1 — Load the real IPEDS 2022-23 data ⏳ *in progress (Cowork)*
+### Phase 1 — Load the real IPEDS 2022-23 data ✅ *complete 2026-10-28*
 
 The app is meaningless on 300 synthetic colleges. The reference app had 1,907 real ones.
 
 - [x] Download the 7 files from the [IPEDS Data Center](https://nces.ed.gov/ipeds/datacenter/DataFiles.aspx) (complete data files, CSV).
-- [ ] Verify column-name case before renaming. `data.py` uppercases headers **only** for
-      `HD2022`; the other seven are read with exact uppercase names and will `KeyError`.
 - [x] ~~Resolve the `SFA2122_P1` / `_P2` question~~ — IPEDS publishes **one** `SFA2122`
       file; no P1/P2 split has ever existed. `config.py` and `data.py` now read one file.
 - [x] ~~Verify column-name case~~ — all seven files ship UPPERCASE headers; no change needed.
-- [ ] Place in `backend/data/` under the exact names in `config.py`. **Never commit them.**
+- [x] Placed in `backend/data/` from the `_rv` (revised Sept 2024) releases. Not committed.
+- [x] **Net price was dropping all 726 public universities** — `NPT442` is private-only.
+      Fixed in `54a0611`; see `PROJECT_BRIEF.md` §6 Resolved.
 
-**Done when:** `/api/meta` returns ~1,900 colleges and the backend starts without error.
+**Done:** `/api/meta` returns 1,907 colleges; backend starts clean.
 
-### Phase 2 — Validate the pipeline against known numbers 🔒 *blocked by Phase 1*
+### Phase 2 — Validate the pipeline against known numbers ✅ *complete 2026-10-28*
 
 This is the only ground truth the project has. Do not skip it, and do not change the
 data year until it passes (see §6).
 
-- [ ] Compare `/api/meta` against the reference app's observed values:
-      `colleges_in_dataset` 1907 · `median_aid_share` 0.3184 · `net_price_min` 2200 ·
-      `net_price_max` 63997 · `sat_coverage` 985.
-- [ ] Record every delta with an explanation. `flagged_count` will **not** match the
-      reference's 1352 — the `RISK_FLAGS` definition changed deliberately.
-- [ ] Confirm `ADMISSIONS_RATE` / `GRAD_RATE` arrive as percentages and the ÷100
-      heuristic fires correctly.
-- [ ] Check sentinel handling (−1/−2/−3/−9 and `.`) against the real dictionaries.
-- [ ] `pytest` still green.
+| metric | reference | actual | |
+|---|---|---|---|
+| `colleges_in_dataset` | 1907 | 1907 | ✅ |
+| `net_price_min` | 2200 | 2200 | ✅ |
+| `net_price_max` | 63997 | 63997 | ✅ |
+| `sat_coverage` | 985 | 985 | ✅ |
+| `median_aid_share` | 0.3184 | 0.343 | ⚠️ explained — COA, Phase 3 |
+| `flagged_count` | 1352 | 379 | ✅ expected — `RISK_FLAGS` redefined |
 
-**Done when:** every metric either matches the reference or has a written explanation.
+Also confirmed: rates arrive as 0–100 and the ÷100 heuristic fires (values land
+0.03–1.0); **no negative sentinels appear** in any column the app reads, so that
+cleaning step is inert for this dataset; `pytest` 9 passed.
+
+Other real-data figures: `median_mgi` 0.5798, `data_gap_count` 922,
+`unscoreable_count` 180.
+
+**Done:** four of five metrics match exactly. The fifth has a written explanation and
+a known fix (Phase 3, item 1).
 
 ### Phase 3 — Close the open scoring questions 🔒 *blocked by Phase 2*
 
 Only answerable on real data. `PROJECT_BRIEF.md` §6 Still open is the checklist.
 
-- [ ] **COA vs net price comparability.** Confirm against the IPEDS dictionary whether
-      `NPT442` is defined against a cost basket `COA` doesn't reconstruct (fees,
-      other expenses). If so, fix `COA` or document the bias explicitly.
+- [ ] **COA vs net price comparability** — now the only unexplained gap. Switch to
+      `DRVIC2022` ("Total cost of attendance"), almost certainly what the reference used;
+      it should close the `median_aid_share` gap and retire the 174 `incomplete_coa`
+      colleges. **Check the variant first:** `NPIS442` is *in-state* public net price, so
+      the COA column must be in-state too, or publics get an out-of-state sticker measured
+      against an in-state net price and their Discount inflates.
 - [ ] **Replace the percent-scaling heuristic** with an explicit per-column declaration.
 - [ ] **Test the equal weighting.** Report the Value Score distribution, each
       component's correlation with final rank, and sensitivity to reweighting.
@@ -152,8 +163,25 @@ Do this before deploying. The failure it prevents is the failure most likely to 
 - [ ] **Add error states.** `getMeta()` needs a `.catch()`; show a real error with a
       retry instead of an endless spinner. Same for `getColleges`.
 - [ ] **Empty state** when filters return zero rows.
-- [ ] **Fix the RAG dead-end** — enable `sentence-transformers`, or soften the
-      similarity threshold and say "no strong match" instead of "none found".
+- [ ] **Decide what happens to the RAG feature.** It has no real data source:
+      `IC2022Mission.csv` does not exist — IPEDS stopped publishing mission statements
+      after 2007. Measured coverage of the 2007 file against the 2022 universe is
+      **36.2%** (690/1907), biased against exactly the sector we just restored
+      (publics 26.9% vs private nonprofit 41.5%), and only **36 of the top 100** by
+      Value Score have any text. The file was half-empty even in 2007.
+
+      It is also *currently broken*: `backend/index/mission_index.npz` was built from
+      the sample CSV, so it holds UNITIDs 100000–100299 while real shortlist IDs are
+      150k–250k. Every query returns "No relevant mission statements found".
+
+      Recommended: gate it honestly rather than delete it. Have the backend report the
+      mission source (`real` / `synthetic` / `none`) in `/api/rag/status`, and have the
+      frontend hide the panel or show a plain warning when it isn't real. That keeps
+      the pipeline demonstrable without presenting invented text beside real numbers.
+      Finding a genuine source is a separate project.
+- [ ] **Fix the RAG dead-end** (only if the feature survives) — enable
+      `sentence-transformers`, or soften the similarity threshold and say "no strong
+      match" instead of "none found".
 - [ ] Surface the retrieval mode (embeddings vs TF-IDF) in the UI.
 - [ ] Input validation on `/api/colleges` — helpful 4xx messages, not 500s.
 - [ ] Consider code-splitting the 4.8 MB bundle (1.4 MB gzipped, nearly all Plotly).
