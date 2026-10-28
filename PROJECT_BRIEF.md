@@ -2,6 +2,24 @@
 
 A briefing for Claude Cowork (or any agent) picking this project up to **test, analyze, and improve** it. Read this first; it explains what the project is, how it's built, what's uncertain, and where to focus.
 
+This doc absorbed the former `FORMULAS.md` (§5–§6, §12) and `GOTCHAS.md` (§9) so there is one place to look. For *what's left to do*, see `PROJECT_STATE.md`.
+
+| | |
+|---|---|
+| §1 | [What the project is](#1-what-the-project-is) |
+| §2 | [IMPORTANT context — this is a reconstruction](#2-important-context--this-is-a-reconstruction) |
+| §3 | [Architecture](#3-architecture) |
+| §4 | [The data](#4-the-data) |
+| §5 | [Metrics & scoring](#5-metrics--scoring) |
+| §6 | [Scoring status — resolved and still open](#6-scoring-status--resolved-and-still-open) |
+| §7 | [API contract](#7-api-contract) |
+| §8 | [How to run](#8-how-to-run) |
+| §9 | [Environment gotchas](#9-environment-gotchas) |
+| §10 | [Known gaps, risks & things to verify](#10-known-gaps-risks--things-to-verify) |
+| §11 | [Suggested tasks](#11-suggested-tasks) |
+| §12 | [Where to change things](#12-where-to-change-things) |
+| §13 | [File map](#13-file-map) |
+
 ---
 
 ## 1. What the project is
@@ -47,9 +65,11 @@ docker-compose.yml   runs frontend + backend together locally
 
 ---
 
-## 4. The data (8 IPEDS files)
+## 4. The data
 
-Placed in `backend/data/` with exact names:
+### The 8 IPEDS files
+
+Placed in `backend/data/` with **exact** names:
 
 | File | Supplies |
 |---|---|
@@ -64,22 +84,148 @@ Placed in `backend/data/` with exact names:
 
 The app runs on generated **sample data** out of the box; real IPEDS files drop in by the same names.
 
+### Columns the app reads
+
+| Column | Meaning | Source file |
+|---|---|---|
+| `TUITION2` | Tuition sticker (in-state/published) | IC2022_AY.csv |
+| `CHG4AY3`, `CHG5AY3` | Room & board / other charge components | IC2022_AY.csv |
+| `COA` | Total sticker (cost of attendance) — **derived**, see §5 | IC2022_AY.csv |
+| `IGRNT_A` | Average institutional grant per student | SFA2122_P1.csv |
+| `NET_PRICE_MID` | Net price, $75k–$110k income band (IPEDS `NPT442`) | SFA2122_P2.csv |
+| `ADMISSIONS_RATE` | Admit rate (IPEDS `DVADM01`) | DRVADM2022.csv |
+| `GRAD_RATE` | 4-year graduation rate (IPEDS `GBA4RTT`) | DRVGR2022.csv |
+| `SATVR75`, `SATMT75` | SAT 75th percentile, verbal + math | ADM2022.csv |
+
+### Cleaning applied first (`data.py`)
+
+- IPEDS missing sentinels `-1, -2, -3, -9` → `NaN`.
+- Universe filter: `ICLEVEL == 1` **and** `HDEGOFR1 >= 3` (4-year, degree-granting).
+- All 8 files joined on `UNITID` (left joins onto the directory table).
+- Rows missing **any** of `TUITION2`, `IGRNT_A`, `NET_PRICE_MID` are dropped — no financial basis to analyze.
+- `ADMISSIONS_RATE` and `GRAD_RATE` are divided by 100 **only if** the column max exceeds 1.5 (heuristic to detect percent-vs-fraction encoding). See §6.
+
+> **Column-name case matters.** `data.py` uppercases headers only for `HD2022`; the other seven files are read with exact uppercase column names and will raise `KeyError` if the real headers differ. Verify before swapping in real data.
+
 ---
 
-## 5. Metrics & scoring (audit these)
+## 5. Metrics & scoring
 
-- **MGI (Merit Generosity Index)** = `IGRNT_A / TUITION2` — grant vs tuition sticker (original assignment metric).
-- **Aid Share** = `IGRNT_A / COA` — grant as a fraction of *total* sticker (cost of attendance). Headline generosity.
-- **Net Price Ratio** = `NET_PRICE_MID / COA` — share of sticker a family still pays (lower = better).
-- **Discount** = `COA − NET_PRICE_MID`.
-- **Value Score (0–100)** = mean of three equally-weighted percentile ranks: affordability (lower net price), graduation rate, and aid generosity (aid share). **This is the primary ranking metric.**
-- **Legacy Score** = `(MGI + grad_rate) / net_price_ratio` — the original formula, retained for comparison.
+The definitive reference for every number the app computes. All of it lives in `backend/app/scoring.py` (metrics + ranking) and `backend/app/data.py` (inputs). **If you change a formula, update this section in the same turn.**
 
-Default filters (also user-adjustable): net price ≤ $25,000, MGI ≥ dataset median, top 20, exclude data-flagged rows.
+> **Status:** these formulas are a *reconstruction* of the reference app's described behavior, not a verified copy of an original implementation. They are internally consistent and defensible, but "matches the original" is unproven. §6 lists what is still open.
+
+### COA (total sticker)
+
+```
+COA = TUITION2 + CHG4AY3 + CHG5AY3     # summed with min_count=1
+COA = TUITION2                          # fallback if charge columns absent
+COA_COMPLETE = every charge component used to build COA was present
+```
+
+`min_count=1` means the sum is non-NaN if *at least one* component exists — so a college with tuition but no room/board figure still gets a COA, equal to tuition alone. That understates its sticker and therefore understates its Discount and inflates its Aid Share, which is why `COA_COMPLETE` is false for it and `incomplete_coa` is flagged. See §6.
+
+### The metrics
+
+All computed in `add_metrics()`.
+
+**Discount**
+```
+DISCOUNT = COA - NET_PRICE_MID
+```
+Dollars the sticker price overstates what a middle-income family actually pays. Bigger = better deal. This is what the dumbbell chart draws.
+
+**MGI — Merit Generosity Index**
+```
+MGI = IGRNT_A / TUITION2
+```
+The original project's metric. Grant relative to **tuition only**. Used by the `mgi_at_least_median` filter, not by Value Score.
+
+**Aid Share**
+```
+AID_SHARE = IGRNT_A / COA
+```
+Grant relative to the **full** sticker. The headline generosity measure, and the generosity input to Value Score.
+
+> Note the denominators differ: `MGI` divides by tuition, `AID_SHARE` by total COA. Both are reported; they are not interchangeable and `AID_SHARE` is always the smaller of the two when charge components exist.
+
+**Net Price Ratio**
+```
+NET_PRICE_RATIO = NET_PRICE_MID / COA
+```
+Fraction of sticker the family still pays. **Lower is better.**
+
+### Value Score (0–100) — the primary ranking metric
+
+```
+affordability = percentile_rank(NET_PRICE_MID, higher_is_better=False)
+quality       = percentile_rank(GRAD_RATE,     higher_is_better=True)
+generosity    = percentile_rank(AID_SHARE,     higher_is_better=True)
+
+VALUE_SCORE = (affordability + quality + generosity) / 3 * 100
+```
+
+- `percentile_rank` is pandas `Series.rank(pct=True)`; for "lower is better" it returns `1 - rank`.
+- Three components, **equal weight** (⅓ each). Weights are hard-coded, not configurable.
+- **Scope:** percentiles are computed over the *entire cleaned dataset*, before any user filter is applied. So a Value Score of 90 means "top 10% of all 4-year colleges", not "top 10% of the colleges currently shown". This is deliberate — scores stay stable as the user moves the filters — but it surprises people.
+- **A missing component makes the college unscoreable**, and `rank_and_filter()` excludes it (see the ranking order below). It is not imputed and not scored on the components that happen to be present — see §6 Resolved for why.
+
+**Legacy Score**
+```
+COMPOSITE_LEGACY = (MGI + GRAD_RATE) / NET_PRICE_RATIO
+```
+The original assignment's composite, retained for comparison only. Never used for ranking. Note it is **not** a faithful reproduction of the original: the original divided by a tuition-based ratio, whereas `NET_PRICE_RATIO` here is COA-based. Unbounded and heavily skewed — don't treat it as comparable to Value Score.
+
+### Filtering & ranking order
+
+`rank_and_filter()` applies steps **in this order** — the order matters:
+
+1. Drop rows missing `COA`, `NET_PRICE_MID`, or `IGRNT_A`.
+2. Drop rows with no `VALUE_SCORE` (any of the three components missing). These are excluded unconditionally — independent of `exclude_flagged` — because an unscoreable college cannot be ranked honestly.
+3. `NET_PRICE_MID <= max_net_price` (default 25000).
+4. If `mgi_at_least_median`: keep `MGI >= median(MGI)`, where the median is taken over the **whole cleaned dataset**, so the threshold does not move when the user changes the other filters.
+5. If `exclude_flagged`: keep only rows where `RISK_FLAGS == ""`.
+6. Sort by `VALUE_SCORE` descending; assign `RANK` starting at 1.
+7. Truncate to `top_n` (default 20).
+
+**Defaults** (`config.DEFAULTS`, echoed by `/api/meta`): `max_net_price=25000`, `mgi_at_least_median=True`, `top_n=20`, `exclude_flagged=True`.
+
+### Data-quality bookkeeping
+
+Three columns, split by whether the missing field actually affects the result:
+
+- `COMPONENTS_USED` — which inputs were present for that row.
+- `RISK_FLAGS` — problems that make the **ranking** untrustworthy: `incomplete_coa`, `no_grad_rate`. `exclude_flagged` gates on this column and nothing else.
+- `DATA_GAPS` — missing fields that affect **display only**: `no_sat`, `no_admit_rate`. These never remove a college from the ranking.
+
+In practice `no_grad_rate` can never appear on a *returned* row, because step 2 drops unscoreable rows before step 5 — so `exclude_flagged` is gated by `incomplete_coa` alone. The flag still counts in `/api/meta`'s `flagged_count`, which is computed over the whole dataset.
 
 ---
 
-## 6. API contract
+## 6. Scoring status — resolved and still open
+
+### Resolved (2026-10-28)
+
+- **Unscoreable colleges were ranked, not excluded.** `Series.add(other, fill_value=np.nan)` was a no-op, so a college missing `GRAD_RATE` scored `NaN` and sorted last silently. Now `rank_and_filter()` drops rows without a `VALUE_SCORE` outright. Two alternatives were rejected deliberately: *partial averaging* (scoring on the components present) rewards non-reporting, because the missing field is almost always the graduation rate that would have pulled a cheap, generous school down; and *median imputation* (what the original pipeline did via `fillna`) credits a college with outcomes it never reported, letting it outrank one that reported honestly.
+- **Median MGI was computed post-filter.** It now uses the whole cleaned dataset. The old behavior took the median of the net-price-filtered subset, which (a) moved the bar whenever the user changed the slider and (b) set it far above "more generous than typical", because low net price is largely *caused* by large grants. On a test fixture the post-filter median was 0.691 against a dataset median of 0.596.
+- **`exclude_flagged` dropped colleges over fields that don't affect the score.** `RISK_FLAGS` now holds only scoring-relevant problems (`incomplete_coa`, `no_grad_rate`); `no_sat` and `no_admit_rate` moved to a new `DATA_GAPS` column. Neither feeds Value Score, so neither removes a college from the ranking any more. On the reference app 1352 of 1907 colleges were flagged while SAT coverage was only 985, meaning the default view was likely discarding most of the dataset — and hiding good-value colleges — for cosmetic reasons. Confirmed on a gapped fixture: **11 of the top 20 colleges were missing SAT data and would previously have been dropped.**
+- **`COA_COMPLETE` was always true.** It tested `COA.notna()`, but COA is built with `min_count=1` and falls back to tuition, so it was never null and `incomplete_coa` never fired. It now means *every* charge component was present. Without this, splitting the flags would have left `exclude_flagged` with nothing to do.
+- **`/api/meta` reported a median the filter doesn't use.** It exposed `median_aid_share` (grant ÷ COA) while `mgi_at_least_median` applies a median of `MGI` (grant ÷ tuition). `median_mgi` is now reported alongside it, plus `data_gap_count` and `unscoreable_count`.
+
+All five are covered by `backend/tests/test_scoring.py`.
+
+### Still open
+
+Ordered by how much they could distort results.
+
+1. **COA vs net price comparability.** `DISCOUNT` and `NET_PRICE_RATIO` assume `COA` and `NPT442` cover the same basket of costs. IPEDS net price is defined against *total* cost of attendance including allowances this COA doesn't reconstruct, so the two may not be apples-to-apples. Verify against IPEDS documentation.
+2. **Percent-scaling heuristic.** Dividing by 100 only when `max > 1.5` is fragile: a real dataset where every rate happens to be ≤ 1.5 (or already fractional) would be mis-scaled with no error. Prefer an explicit per-column declaration.
+3. **Equal weighting is an assertion, not a finding.** ⅓/⅓/⅓ was chosen because the reference app described equal weight. Whether that produces sensible rankings on the real IPEDS data is untested — check the Value Score distribution and each component's correlation with the final rank.
+4. **Weights are not configurable.** Exposing them (and reporting them in `/api/meta`) would make the methodology auditable instead of implicit.
+
+---
+
+## 7. API contract
 
 - `GET /api/meta` — dataset stats (including `median_mgi`, the threshold `mgi_at_least_median` actually applies), default filter values, and the list of toggleable data dimensions.
 - `GET /api/colleges?max_net_price=&mgi_at_least_median=&top_n=&exclude_flagged=` — ranked shortlist; each row has 24 fields (see `observed-api-contract.md`).
@@ -89,7 +235,7 @@ Default filters (also user-adjustable): net price ≤ $25,000, MGI ≥ dataset m
 
 ---
 
-## 7. How to run
+## 8. How to run
 
 **Docker (whole stack):**
 ```bash
@@ -110,31 +256,133 @@ cd ../frontend && npm install && npm run dev   # http://localhost:5173
 cd backend && pip install -r requirements.txt -r requirements-dev.txt
 pytest                                 # 8 tests, no data files needed
 ```
-The suite builds its fixtures in memory rather than reading `backend/data/`, because
-the generated sample data has no missing values and so exercises none of the
-flag/degradation logic. Don't "fix" a test by pointing it at the CSVs.
+The suite builds its fixtures in memory rather than reading `backend/data/`, because the generated sample data has no missing values and so exercises none of the flag/degradation logic. Don't "fix" a test by pointing it at the CSVs.
 
 The AI feature works without a key (returns retrieved passages); set `ANTHROPIC_API_KEY` for synthesized answers.
 
-> **Note on Windows + old PowerShell:** `&&` is rejected — run the commands one per
-> line. See `GOTCHAS.md`.
+> **Windows + old PowerShell:** `&&` is rejected — run the commands one per line. See §9.
 
 ---
 
-## 8. Known gaps, risks & things to verify
+## 9. Environment gotchas
 
-1. **Scoring fidelity** — the Value Score/percentile logic is reconstructed; confirm it's statistically sound (NaN handling in percentile ranks, ties, whether equal weighting is defensible) and matches the intended definition.
-2. **COA construction** — `COA` is summed from tuition + charge components when present, else falls back to tuition. Verify this matches how net price is measured, so `Discount` and `Aid Share` are apples-to-apples.
-3. **Reference app showed intermittent `502`s** on `/api/*` — worth reproducing under load; check backend startup time, resource limits, readiness probes.
+Things that have actually broken this project, and the fix. Check here before debugging a setup problem from scratch. Local machine: **Windows**, project at `C:\Users\amatu\Downloads\merit-aid-app`.
+
+### Windows / PowerShell
+
+**`&&` is not a valid statement separator.** The installed PowerShell predates `&&` support, so chained commands fail with `The token '&&' is not a valid statement separator in this version`.
+
+Run them one per line:
+```powershell
+cd backend
+pip install pandas numpy
+python scripts/make_sample_data.py
+cd ..
+docker compose up --build
+```
+(`;` also works as a separator, but it ignores failures — one-per-line is safer.)
+
+### Python versions
+
+**Local Python is 3.13; the project targets 3.12.** `pip install -r requirements.txt` fails locally on **scikit-learn** — there's no prebuilt wheel for 3.13 against the pinned version, so pip tries to compile from source and dies in ninja/MSVC.
+
+You don't need the full install locally. Docker builds on `python:3.12-slim`, where wheels exist. Locally you only need enough to generate sample data:
+```powershell
+pip install pandas numpy
+python scripts/make_sample_data.py
+```
+
+**`backend/myenv/` is a Python 3.13 venv** left in the project. It's gitignored, so harmless to the repo. It has `pandas`, `numpy`, `scikit-learn`, `fastapi` and `pytest` installed and is usable for running the test suite and uvicorn directly; just don't treat it as the project's target environment.
+
+### Docker
+
+**Docker Desktop must be running before any `docker` command.** Otherwise:
+```
+failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
+```
+That is not a project error — open Docker Desktop, wait for the whale icon to report running (~30s), then retry.
+
+**`frontend/nginx.conf` is required by the frontend image.** It has gone missing once (lost in a cleanup) and the build failed with:
+```
+COPY nginx.conf /etc/nginx/conf.d/default.conf: "/nginx.conf": not found
+```
+If you see that, the file is absent — recreate it. It serves the built SPA and proxies `/api/` to `http://backend:8000`. `frontend/.dockerignore` went missing the same way.
+
+**The large-bundle warning on build is expected** — Plotly is ~4.8 MB minified (1.4 MB gzipped). Not an error; cosmetic only.
+
+**`docker compose up --build` is for local development, not production.** It builds the same images you'd deploy, which makes it a good rehearsal, but it runs only on this machine with no load balancer or scaling. Production is the Terraform + GKE path in `DEPLOYMENT.md`.
+
+### Ports
+
+| Service | URL |
+|---|---|
+| Frontend (Docker) | http://localhost:8080 |
+| Backend API | http://localhost:8000 |
+| Frontend (Vite dev) | http://localhost:5173 |
+
+In Docker the frontend proxies `/api` to the backend container by service name (`backend:8000`). In Vite dev mode the proxy is configured in `vite.config.js`. Either way the browser only ever calls same-origin `/api/*` — don't hard-code `localhost:8000` in frontend code.
+
+### Data
+
+**The 8 IPEDS filenames are exact.** Drop them in `backend/data/`:
+```
+HD2022.csv  SFA2122_P1.csv  SFA2122_P2.csv  IC2022_AY.csv
+ADM2022.csv  DRVADM2022.csv  DRVGR2022.csv  IC2022Mission.csv
+```
+A missing file raises a `FileNotFoundError` naming the file — that error means a name mismatch, not corrupt data.
+
+**`build_dataset()` is `lru_cache`d.** The dataset loads once per process, so swapping CSVs has **no effect until the backend restarts.** If your numbers don't change after replacing the data, that's why.
+
+**Sample vs real data.** `scripts/make_sample_data.py` writes 300 synthetic colleges so the app runs without the real dataset. Sample data will produce plausible-looking but meaningless rankings — check which one you're on before drawing any conclusion from the output. Real files overwrite the samples (same names).
+
+**Sample data cannot validate the pipeline.** It has no missing values, and its net price is constructed from the same components the app sums into `COA` — so it is circular with the formula it is meant to test. To exercise the flag paths, generate a dataset with realistic missingness.
+
+### AI / RAG feature
+
+**It runs without an API key.** `/api/rag/query` returns the retrieved mission passages with a note instead of a synthesized answer. Set `ANTHROPIC_API_KEY` (in `.env` locally, Secret Manager in GCP) to get Claude-generated answers.
+
+**Retrieval silently falls back to TF-IDF** if `sentence-transformers` isn't installed (it's commented out in `requirements.txt` because it pulls in torch). The response's `mode` field reports which path ran — `sentence-transformers` or `tfidf-fallback`. Retrieval quality differs noticeably, so check `mode` before judging answer quality.
+
+**TF-IDF can dead-end.** If a question shares no vocabulary with the scoped missions, similarity is 0, the `sims[i] <= 0` guard drops every candidate, and the user sees "No relevant mission statements found" even though those colleges do have missions. Real embeddings wouldn't do this.
+
+**The index is built at startup** and persisted to `INDEX_DIR`. `/api/rag/status` reports `index_ready` and `api_key_set`.
+
+### Secrets & ignored paths
+
+Never commit or log: `.env`, `backend/data/`, `backend/index/`, `backend/myenv/`, `frontend/node_modules/`. All are already in `.gitignore` — keep it that way. `ANTHROPIC_API_KEY` comes from the environment or a Kubernetes secret, never source.
+
+### Git
+
+**Only Claude Code commits.** Claude Cowork has equal file and console access but runs no git write commands, and Claude Code owns `.gitignore`, hooks, and CI config. See "Who works on this" in `HANDOFF.md`.
+
+The repo exists and is pushed to github.com/HasanZaidi1980/merit-aid-app on `main`.
+
+### Cloud (not yet exercised)
+
+Nothing has been deployed yet, so none of the GCP steps are battle-tested. Three things to remember when you get there:
+
+- **The backend manifest mounts an `emptyDir` for data**, so the pod boots with no CSVs and `/api/meta` will fail while `/api/health` still passes. Fix before deploying.
+- **GKE plus a load balancer bills continuously.** Run the teardown in `DEPLOYMENT.md` (`kubectl delete -f deploy/k8s/` then `terraform destroy`) when a demo is done.
+- **Delete the load balancer before `terraform destroy`**, or the destroy can hang on resources the Ingress still holds.
+
+---
+
+## 10. Known gaps, risks & things to verify
+
+1. **Scoring fidelity** — the Value Score/percentile logic is reconstructed; confirm it's statistically sound (NaN handling in percentile ranks, ties, whether equal weighting is defensible) and matches the intended definition. §6 tracks resolved vs open.
+2. **COA construction** — `COA` is summed from tuition + charge components when present, else falls back to tuition. Verify this matches how net price is measured, so `Discount` and `Aid Share` are apples-to-apples. This is §6's top open item.
+3. **Reference app showed intermittent `502`s** on `/api/*` — worth reproducing under load; check backend startup time, resource limits, readiness probes. The likely cause is in the manifests, not the code: see §9 Cloud and `PROJECT_STATE.md` Phase 7.
 4. **Test coverage is partial** — `backend/tests/test_scoring.py` covers scoring and the flag split (8 tests). Still missing: `data.py` load/merge/clean, API tests for malformed params, and the RAG endpoint with and without a key.
-5. **RAG fallback** — if `sentence-transformers` isn't installed it silently uses TF-IDF; retrieval quality differs. Confirm which is intended and make it explicit.
+5. **RAG fallback** — if `sentence-transformers` isn't installed it silently uses TF-IDF; retrieval quality differs. Confirm which is intended and make it explicit. See §9.
 6. **Frontend bundle is large** (Plotly). Fine for a demo; could be code-split.
-7. **Data-quality flags** — reworked since this list was written. `RISK_FLAGS` now carries only scoring-relevant problems and `DATA_GAPS` carries display-only ones; `exclude_flagged` gates on the former. Covered by tests. `FORMULAS.md` tracks what's resolved vs still open — read that rather than this list for scoring status.
+7. **No error states in the UI** — `getMeta()` has no `.catch()`, so a backend failure leaves the page on a permanent "Loading…" with no retry. Given the known 502 risk, this is the most likely failure a real user would hit.
 8. **Percentage scaling** — admissions/graduation rates are divided by 100 only when values look like percentages; check this heuristic against the real IPEDS files.
 
 ---
 
-## 9. Suggested tasks for Cowork
+## 11. Suggested tasks
+
+Task *ideas*, not a sequenced plan — `PROJECT_STATE.md` owns the roadmap.
 
 **Test**
 - ~~Add a `pytest` suite for `scoring.py`~~ — done, `backend/tests/test_scoring.py`. Extend it to `data.py` (load/merge/clean, sentinel handling, empty-result handling).
@@ -161,18 +409,32 @@ The AI feature works without a key (returns retrieved passages); set `ANTHROPIC_
 
 ---
 
-## 10. File map
+## 12. Where to change things
+
+| Change | File |
+|---|---|
+| Any formula, the weights, the ranking order | `backend/app/scoring.py` |
+| Inputs, cleaning, COA construction, scaling | `backend/app/data.py` |
+| Default filter values | `backend/app/config.py` (`DEFAULTS`) |
+| Fields exposed by the API | `backend/app/main.py` (`ROW_FIELDS`) |
+| The 8 expected filenames (e.g. a data-year upgrade) | `backend/app/config.py` (`FILES`) **and** `backend/scripts/make_sample_data.py` |
+
+Changing `ROW_FIELDS` or renaming a column is a **breaking API change** — the frontend reads these names directly. See `observed-api-contract.md`.
+
+Changing a formula means updating §5 in the same turn, and moving the entry in §6 if it resolves an open item.
+
+---
+
+## 13. File map
 
 ```
 merit-aid-app/
-  PROJECT_BRIEF.md          ← this file
-  HANDOFF.md                current status + how Claude Code and Cowork split the work
+  PROJECT_BRIEF.md          ← this file. Architecture, data, formulas, gotchas, tasks
   PROJECT_STATE.md          status at a glance + phased roadmap, incl. the 2023-24 data upgrade
+  HANDOFF.md                current status + how Claude Code and Cowork split the work
   README.md                 how to run
   ANALYSIS.md               what the live reference app is + cloud/hosting findings
   observed-api-contract.md  exact endpoints + the 24-field schema this app returns
-  FORMULAS.md               every metric, with resolved vs still-open scoring issues
-  GOTCHAS.md                environment traps (PowerShell, Python 3.13, missing files)
   DEPLOYMENT.md             GCP deploy steps + teardown
   docker-compose.yml
   backend/

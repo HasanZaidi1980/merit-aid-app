@@ -11,10 +11,8 @@ owning doc when a fact changes.
 |---|---|
 | **PROJECT_STATE.md** | ← this file. Status + the road to completion. |
 | `HANDOFF.md` | Who works on this (Claude Code / Cowork split), guardrails, applied fixes. |
-| `PROJECT_BRIEF.md` | Architecture, data pipeline, how to run, task ideas. |
-| `FORMULAS.md` | Every metric definition; resolved vs still-open scoring questions. |
+| `PROJECT_BRIEF.md` | Architecture, data pipeline, how to run, **the formulas** (§5-§6), **environment gotchas** (§9), task ideas. |
 | `observed-api-contract.md` | The API contract and 24-field row schema. |
-| `GOTCHAS.md` | Environment traps (PowerShell, Python versions, Docker, ports, secrets). |
 | `ANALYSIS.md` | What the reference app is and what was observable from outside. |
 | `DEPLOYMENT.md` | GCP deploy steps and teardown. |
 
@@ -29,7 +27,7 @@ owning doc when a fact changes.
 | Backend API | ✅ Working | All 5 endpoints verified; 24-field rows. |
 | Frontend | ✅ Working | 5 charts, sortable table, CSV export, RAG panel. |
 | RAG / AI | ⚠️ Works, degraded | Runs on TF-IDF fallback, not embeddings. Live Claude answers confirmed. |
-| Scoring logic | ⚠️ Partly validated | 4 issues resolved + tested; **4 still open** (see `FORMULAS.md`). |
+| Scoring logic | ⚠️ Partly validated | 5 issues resolved + tested; **4 still open** (see `PROJECT_BRIEF.md` §6). |
 | Tests | ⚠️ Partial | 8 tests over scoring/flags. No `data.py` or endpoint tests. |
 | **Real data** | ❌ **Not yet** | Still 300 synthetic colleges. Download in progress (Cowork). |
 | Error handling | ❌ Missing | Backend failure = permanent "Loading…" spinner. |
@@ -64,7 +62,7 @@ Confirmed by running it, not by reading it:
    it is circular with the formula it is meant to test.
 2. **Four open scoring questions** — COA vs net price comparability, the percent-scaling
    heuristic, whether equal weighting is defensible, and non-configurable weights.
-   `FORMULAS.md` §Still open is authoritative.
+   `PROJECT_BRIEF.md` §6 Still open is authoritative.
 3. **No error state anywhere in the UI.** `getMeta()` has no `.catch()`; a failed call
    leaves `meta` null and the page renders "Loading…" forever.
 4. **RAG runs on TF-IDF.** `sentence-transformers` is commented out of
@@ -133,7 +131,7 @@ data year until it passes (see §6).
 
 ### Phase 3 — Close the open scoring questions 🔒 *blocked by Phase 2*
 
-Only answerable on real data. `FORMULAS.md` §Still open is the checklist.
+Only answerable on real data. `PROJECT_BRIEF.md` §6 Still open is the checklist.
 
 - [ ] **COA vs net price comparability.** Confirm against the IPEDS dictionary whether
       `NPT442` is defined against a cost basket `COA` doesn't reconstruct (fees,
@@ -143,7 +141,7 @@ Only answerable on real data. `FORMULAS.md` §Still open is the checklist.
       component's correlation with final rank, and sensitivity to reweighting.
 - [ ] **Make weights configurable** and report them in `/api/meta`.
 
-**Done when:** `FORMULAS.md` §Still open is empty or every remaining item is a conscious
+**Done when:** `PROJECT_BRIEF.md` §6 Still open is empty or every remaining item is a conscious
 accepted trade-off.
 
 ### Phase 4 — Harden the app for a real user
@@ -310,4 +308,4 @@ Reverting is: restore those files and revert the filename commit.
 Earlier in the reconstruction (pre-git), four scoring issues were found and fixed: the
 `fill_value=NaN` no-op in Value Score, the post-filter MGI median, the always-true
 `COA_COMPLETE`, and `/api/meta` reporting a median the filter doesn't use. All four are
-recorded in `FORMULAS.md` §Resolved and covered by tests.
+recorded in `PROJECT_BRIEF.md` §6 Resolved and covered by tests.
