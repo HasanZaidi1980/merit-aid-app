@@ -27,8 +27,8 @@ owning doc when a fact changes.
 | Backend API | ✅ Working | All 5 endpoints verified; 24-field rows. |
 | Frontend | ✅ Working | 5 charts, sortable table, CSV export, RAG panel. |
 | RAG / AI | ⚠️ Works, degraded | Runs on TF-IDF fallback, not embeddings. Live Claude answers confirmed. |
-| Scoring logic | ⚠️ Partly validated | 5 issues resolved + tested; **4 still open** (see `PROJECT_BRIEF.md` §6). |
-| Tests | ⚠️ Partial | 8 tests over scoring/flags. No `data.py` or endpoint tests. |
+| Scoring logic | ⚠️ Partly validated | 6 issues resolved + tested; **4 still open** (see `PROJECT_BRIEF.md` §6). COA is the last unexplained gap vs the reference. |
+| Tests | ⚠️ Partial | 9 tests over scoring, flags and net-price coalescing. No endpoint tests. |
 | **Real data** | ❌ **Not yet** | Still 300 synthetic colleges. Download in progress (Cowork). |
 | Error handling | ❌ Missing | Backend failure = permanent "Loading…" spinner. |
 | Deployment | ❌ Not started | Terraform + K8s manifests exist, never applied. |
@@ -103,11 +103,12 @@ Phases are ordered by dependency. Each has a **Done when** you can actually chec
 
 The app is meaningless on 300 synthetic colleges. The reference app had 1,907 real ones.
 
-- [ ] Download the 8 files from the [IPEDS Data Center](https://nces.ed.gov/ipeds/datacenter/DataFiles.aspx) (complete data files, CSV).
+- [x] Download the 7 files from the [IPEDS Data Center](https://nces.ed.gov/ipeds/datacenter/DataFiles.aspx) (complete data files, CSV).
 - [ ] Verify column-name case before renaming. `data.py` uppercases headers **only** for
       `HD2022`; the other seven are read with exact uppercase names and will `KeyError`.
-- [ ] Resolve the `SFA2122_P1` / `_P2` question — the app expects two files; confirm what
-      IPEDS actually publishes rather than guessing.
+- [x] ~~Resolve the `SFA2122_P1` / `_P2` question~~ — IPEDS publishes **one** `SFA2122`
+      file; no P1/P2 split has ever existed. `config.py` and `data.py` now read one file.
+- [x] ~~Verify column-name case~~ — all seven files ship UPPERCASE headers; no change needed.
 - [ ] Place in `backend/data/` under the exact names in `config.py`. **Never commit them.**
 
 **Done when:** `/api/meta` returns ~1,900 colleges and the backend starts without error.
@@ -215,7 +216,7 @@ There is no complete "2025" dataset — the winter-survey components this app de
 most (aid, admissions, graduation rates) don't exist for 2025-26 yet. 2024-25 would be
 one year fresher but its aid and admissions data are provisional and subject to
 revision, which is the wrong trade for an app that outputs dollar figures families may
-act on. **2023-24 is the newest year where all eight files exist and are final**, and
+act on. **2023-24 is the newest year where all seven files exist and are final**, and
 it is still two collection cycles newer than what the app uses now.
 
 ### Why it must wait for Phase 2
@@ -234,8 +235,7 @@ one year → `SFA2122`). **Verify against the Data Center before relying on this
 | Current | Expected 2023-24 |
 |---|---|
 | `HD2022.csv` | `HD2023.csv` |
-| `SFA2122_P1.csv` | `SFA2223_P1.csv` |
-| `SFA2122_P2.csv` | `SFA2223_P2.csv` |
+| `SFA2122.csv` | `SFA2223.csv` |
 | `IC2022_AY.csv` | `IC2023_AY.csv` |
 | `ADM2022.csv` | `ADM2023.csv` |
 | `DRVADM2022.csv` | `DRVADM2023.csv` |

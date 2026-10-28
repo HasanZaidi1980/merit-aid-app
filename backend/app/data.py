@@ -27,6 +27,29 @@ def _clean_missing(df: pd.DataFrame, cols) -> pd.DataFrame:
     return df
 
 
+def net_price(sfa: pd.DataFrame) -> pd.Series:
+    """Average net price for the $75k-$110k band, across the whole universe.
+
+    IPEDS splits this into two mutually exclusive variables that share an identical
+    dictionary title, so the distinction is invisible unless you check which rows
+    carry a value:
+
+        NPT442   private institutions (CONTROL 2, 3)
+        NPIS442  public institutions, in-state (CONTROL 1)
+
+    Reading NPT442 alone silently drops every public university -- 726 of 1907 in
+    IPEDS 2022-23, for a tool whose whole subject is affordability. Coalescing the
+    two reproduces the reference app's `colleges_in_dataset` (1907) and
+    `sat_coverage` (985) exactly.
+
+    They should never both be populated for one institution; NPT442 wins if they are.
+    """
+    price = sfa["NPT442"] if "NPT442" in sfa.columns else pd.Series(np.nan, index=sfa.index)
+    if "NPIS442" in sfa.columns:
+        price = price.combine_first(sfa["NPIS442"])
+    return price
+
+
 @functools.lru_cache(maxsize=1)
 def build_dataset() -> pd.DataFrame:
     """Merge + clean + add metrics. Cached so it loads once per process."""
@@ -41,9 +64,8 @@ def build_dataset() -> pd.DataFrame:
     hd["CONTROL_LABEL"] = hd["CONTROL"].map({1: "Public", 2: "Private nonprofit",
                                              3: "Private for-profit"}).fillna("Other")
 
-    sfa1 = _clean_missing(_read("sfa_p1"), ["IGRNT_A"])[["UNITID", "IGRNT_A"]]
-    sfa2 = _clean_missing(_read("sfa_p2"), ["NPT442"])[["UNITID", "NPT442"]] \
-        .rename(columns={"NPT442": "NET_PRICE_MID"})
+    sfa = _clean_missing(_read("sfa"), ["IGRNT_A", "NPT442", "NPIS442"])
+    sfa = sfa.assign(NET_PRICE_MID=net_price(sfa))[["UNITID", "IGRNT_A", "NET_PRICE_MID"]]
     ic = _clean_missing(_read("ic_ay"), ["TUITION2", "CHG4AY3", "CHG5AY3", "CHG6AY3", "CHG7AY3"])
     # Build COA (cost of attendance) if the component columns exist.
     coa_parts = [c for c in ["TUITION2", "CHG4AY3", "CHG5AY3"] if c in ic.columns]
@@ -65,7 +87,7 @@ def build_dataset() -> pd.DataFrame:
         .rename(columns={"GBA4RTT": "GRAD_RATE"})
 
     df = hd
-    for other in [sfa1, sfa2, ic, adm, drvadm, drvgr]:
+    for other in [sfa, ic, adm, drvadm, drvgr]:
         df = df.merge(other, on="UNITID", how="left")
 
     if "COA" not in df.columns:

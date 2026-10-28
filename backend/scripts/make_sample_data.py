@@ -20,11 +20,18 @@ books = rng.integers(800, 1600, N)
 grant = (tuition * rng.uniform(0.1, 0.8, N)).astype(int)
 net = (tuition + room_board + books - grant - rng.integers(0, 8000, N)).clip(2000, 64000)
 
+control = rng.choice([1, 2], N)
 pd.DataFrame({"UNITID": unitids, "INSTNM": names, "STABBR": states,
-              "CONTROL": rng.choice([1, 2], N), "ICLEVEL": 1, "HDEGOFR1": 4}
+              "CONTROL": control, "ICLEVEL": 1, "HDEGOFR1": 4}
              ).to_csv(f"{DATA}/HD2022.csv", index=False)
-pd.DataFrame({"UNITID": unitids, "IGRNT_A": grant}).to_csv(f"{DATA}/SFA2122_P1.csv", index=False)
-pd.DataFrame({"UNITID": unitids, "NPT442": net}).to_csv(f"{DATA}/SFA2122_P2.csv", index=False)
+# One SFA file, matching IPEDS. Net price splits across two mutually exclusive
+# columns -- NPT442 for private institutions, NPIS442 for public (in-state) -- so
+# the sample data exercises the coalescing in data.net_price() rather than hiding it.
+is_public = control == 1
+pd.DataFrame({"UNITID": unitids, "IGRNT_A": grant,
+              "NPT442": np.where(is_public, np.nan, net),
+              "NPIS442": np.where(is_public, net, np.nan)}
+             ).to_csv(f"{DATA}/SFA2122.csv", index=False)
 pd.DataFrame({"UNITID": unitids, "TUITION2": tuition,
               "CHG4AY3": room_board, "CHG5AY3": books}).to_csv(f"{DATA}/IC2022_AY.csv", index=False)
 pd.DataFrame({"UNITID": unitids, "SATVR75": rng.integers(500, 750, N),
@@ -41,4 +48,4 @@ missions = [f"{names[i]} is dedicated to excellence in {rng.choice(themes)}, "
 pd.DataFrame({"unitid": unitids, "mission": missions}
              ).to_csv(f"{DATA}/IC2022Mission.csv", index=False)
 
-print(f"Wrote 8 sample files to {os.path.abspath(DATA)}")
+print(f"Wrote 7 sample files to {os.path.abspath(DATA)}")

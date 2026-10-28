@@ -15,7 +15,7 @@ terraform apply -var project_id=YOUR_PROJECT -var bucket_name=YOUR_UNIQUE_BUCKET
 ```
 This creates the VPC, GKE cluster, Artifact Registry repo, and the storage bucket.
 
-## 2. Upload the 8 IPEDS CSVs (manual, once)
+## 2. Upload the 7 IPEDS CSVs (manual, once)
 ```bash
 gcloud storage cp backend/data/*.csv gs://YOUR_UNIQUE_BUCKET/
 ```

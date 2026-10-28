@@ -23,8 +23,9 @@ DEFAULTS = {
 # The 8 IPEDS files this app expects (exact filenames).
 FILES = {
     "hd":       "HD2022.csv",
-    "sfa_p1":   "SFA2122_P1.csv",
-    "sfa_p2":   "SFA2122_P2.csv",
+    # One file, not the two the reconstruction originally assumed. IPEDS has never
+    # published an SFA P1/P2 split; both IGRNT_A and the net-price columns live here.
+    "sfa":      "SFA2122.csv",
     "ic_ay":    "IC2022_AY.csv",
     "adm":      "ADM2022.csv",
     "drvadm":   "DRVADM2022.csv",

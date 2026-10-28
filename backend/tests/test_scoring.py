@@ -160,6 +160,27 @@ def test_mgi_median_is_dataset_wide_not_post_filter():
     assert kept == ["CheapGenerous", "CheapGeneroustoo"]
 
 
+def test_net_price_includes_public_institutions():
+    """NPT442 alone drops every public university -- 726 of 1907 in IPEDS 2022-23.
+
+    The two variables share an identical dictionary title and are mutually exclusive
+    (NPT442 private, NPIS442 public in-state), so reading one looks like it works
+    right up until you notice half the universe is missing.
+    """
+    from app.data import net_price
+
+    sfa = pd.DataFrame({
+        "UNITID": [1, 2, 3],
+        "NPT442": [18000.0, np.nan, np.nan],    # private
+        "NPIS442": [np.nan, 12000.0, np.nan],   # public
+    })
+    assert list(net_price(sfa)) == [18000.0, 12000.0] + [pytest.approx(np.nan, nan_ok=True)]
+    assert net_price(sfa).notna().sum() == 2
+
+    # A file predating the NPIS442 column must still load rather than raise.
+    assert list(net_price(sfa[["UNITID", "NPT442"]])) [:1] == [18000.0]
+
+
 def test_api_row_schema_exposes_data_gaps():
     """The contract is 24 fields now; DATA_GAPS is additive, nothing was removed."""
     from app.main import ROW_FIELDS

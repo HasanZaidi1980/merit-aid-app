@@ -53,11 +53,11 @@ docker-compose.yml   runs frontend + backend together locally
 ```
 
 - **Frontend** calls same-origin `/api/*`. In dev, Vite proxies to the backend; in prod, nginx proxies to the backend service.
-- **Backend** loads 8 IPEDS CSVs, cleans + merges them on `UNITID`, computes metrics, and serves ranked results. It also builds a vector index over college mission statements for the AI feature.
+- **Backend** loads 7 IPEDS CSVs, cleans + merges them on `UNITID`, computes metrics, and serves ranked results. It also builds a vector index over college mission statements for the AI feature.
 - **Deployment target** is GCP (GKE behind a Google Cloud Load Balancer), mirroring the reference app.
 
 ### Key backend files
-- `app/data.py` — load, clean (IPEDS missing-value sentinels −1/−2/−3/−9 → NaN), filter to 4-year degree-granting, merge the 8 files, build the analysis table.
+- `app/data.py` — load, clean (IPEDS missing-value sentinels −1/−2/−3/−9 → NaN), filter to 4-year degree-granting, merge the 7 files, build the analysis table.
 - `app/scoring.py` — all derived metrics and the ranking/filtering logic. **Audit here.**
 - `app/rag.py` — mission-statement embeddings (local `sentence-transformers`, TF-IDF fallback) + retrieval + Claude answer generation.
 - `app/main.py` — the `/api/*` endpoints.
@@ -67,15 +67,14 @@ docker-compose.yml   runs frontend + backend together locally
 
 ## 4. The data
 
-### The 8 IPEDS files
+### The 7 IPEDS files
 
 Placed in `backend/data/` with **exact** names:
 
 | File | Supplies |
 |---|---|
 | HD2022.csv | College directory + filter (name, state, control, level) |
-| SFA2122_P1.csv | Avg institutional grant (`IGRNT_A`) |
-| SFA2122_P2.csv | Net price for mid-income families (`NPT442`) |
+| SFA2122.csv | Avg institutional grant (`IGRNT_A`) + net price (`NPT442` private / `NPIS442` public) |
 | IC2022_AY.csv | Sticker price / cost-of-attendance components (`TUITION2`, charges) |
 | ADM2022.csv | SAT 75th percentile scores |
 | DRVADM2022.csv | Admissions rate (`DVADM01`) |
@@ -91,17 +90,18 @@ The app runs on generated **sample data** out of the box; real IPEDS files drop 
 | `TUITION2` | Tuition sticker (in-state/published) | IC2022_AY.csv |
 | `CHG4AY3`, `CHG5AY3` | Room & board / other charge components | IC2022_AY.csv |
 | `COA` | Total sticker (cost of attendance) — **derived**, see §5 | IC2022_AY.csv |
-| `IGRNT_A` | Average institutional grant per student | SFA2122_P1.csv |
-| `NET_PRICE_MID` | Net price, $75k–$110k income band (IPEDS `NPT442`) | SFA2122_P2.csv |
+| `IGRNT_A` | Average institutional grant per student | SFA2122.csv |
+| `NET_PRICE_MID` | Net price, $75k–$110k band — **derived**, coalesces `NPT442` (private) and `NPIS442` (public), see below | SFA2122.csv |
 | `ADMISSIONS_RATE` | Admit rate (IPEDS `DVADM01`) | DRVADM2022.csv |
 | `GRAD_RATE` | 4-year graduation rate (IPEDS `GBA4RTT`) | DRVGR2022.csv |
 | `SATVR75`, `SATMT75` | SAT 75th percentile, verbal + math | ADM2022.csv |
 
 ### Cleaning applied first (`data.py`)
 
-- IPEDS missing sentinels `-1, -2, -3, -9` → `NaN`.
+- **Net price is coalesced from two variables.** IPEDS splits it into `NPT442` (private institutions) and `NPIS442` (public, in-state). The two share an identical dictionary title and are mutually exclusive, so reading `NPT442` alone looks correct while silently dropping **726 of 1907** public universities. `data.net_price()` combines them. See §6 Resolved.
+- IPEDS missing sentinels `-1, -2, -3, -9` → `NaN`. In the real 2022-23 files **no negative sentinels appear** in any column this app reads — IPEDS leaves those cells blank — so this replacement is inert for this dataset. Kept for other years/columns.
 - Universe filter: `ICLEVEL == 1` **and** `HDEGOFR1 >= 3` (4-year, degree-granting).
-- All 8 files joined on `UNITID` (left joins onto the directory table).
+- All 7 files joined on `UNITID` (left joins onto the directory table).
 - Rows missing **any** of `TUITION2`, `IGRNT_A`, `NET_PRICE_MID` are dropped — no financial basis to analyze.
 - `ADMISSIONS_RATE` and `GRAD_RATE` are divided by 100 **only if** the column max exceeds 1.5 (heuristic to detect percent-vs-fraction encoding). See §6.
 
@@ -212,13 +212,17 @@ In practice `no_grad_rate` can never appear on a *returned* row, because step 2 
 - **`COA_COMPLETE` was always true.** It tested `COA.notna()`, but COA is built with `min_count=1` and falls back to tuition, so it was never null and `incomplete_coa` never fired. It now means *every* charge component was present. Without this, splitting the flags would have left `exclude_flagged` with nothing to do.
 - **`/api/meta` reported a median the filter doesn't use.** It exposed `median_aid_share` (grant ÷ COA) while `mgi_at_least_median` applies a median of `MGI` (grant ÷ tuition). `median_mgi` is now reported alongside it, plus `data_gap_count` and `unscoreable_count`.
 
-All five are covered by `backend/tests/test_scoring.py`.
+- **Net price dropped every public university.** The app read `NPT442` only, which covers private institutions; `NPIS442` carries the public (in-state) figure. Both have the same dictionary title, so nothing about the data looks wrong — the universe is just half missing. Coalescing the two reproduces the reference app's `colleges_in_dataset` (1907) and `sat_coverage` (985) **exactly**, from 1181/605 before. For a tool about affordability for middle-income families, publics were the wrong half to lose.
+
+All six are covered by `backend/tests/test_scoring.py`.
 
 ### Still open
 
 Ordered by how much they could distort results.
 
-1. **COA vs net price comparability.** `DISCOUNT` and `NET_PRICE_RATIO` assume `COA` and `NPT442` cover the same basket of costs. IPEDS net price is defined against *total* cost of attendance including allowances this COA doesn't reconstruct, so the two may not be apples-to-apples. Verify against IPEDS documentation.
+1. **COA vs net price comparability.** `DISCOUNT` and `NET_PRICE_RATIO` assume `COA` and the net-price variables cover the same basket of costs. IPEDS net price is defined against *total* cost of attendance including allowances this hand-summed COA doesn't reconstruct, so the two are probably not apples-to-apples.
+
+   This is now the **only unexplained gap** against the reference app: with publics included, four of five `/api/meta` metrics match exactly, and `median_aid_share` is 0.343 against the reference's 0.3184. A larger denominator closes it, which points straight at COA. IPEDS publishes **`DRVIC2022`** ("Total cost of attendance: Academic year 2022-23"), almost certainly what the reference used. Switching to it would also retire the 174 `incomplete_coa` colleges. **Verify the variant matches the net-price basket before switching** — COA differs by in-state/out-of-state and on/off-campus, and public net price is in-state.
 2. **Percent-scaling heuristic.** Dividing by 100 only when `max > 1.5` is fragile: a real dataset where every rate happens to be ≤ 1.5 (or already fractional) would be mis-scaled with no error. Prefer an explicit per-column declaration.
 3. **Equal weighting is an assertion, not a finding.** ⅓/⅓/⅓ was chosen because the reference app described equal weight. Whether that produces sensible rankings on the real IPEDS data is untested — check the Value Score distribution and each component's correlation with the final rank.
 4. **Weights are not configurable.** Exposing them (and reporting them in `/api/meta`) would make the methodology auditable instead of implicit.
@@ -254,7 +258,7 @@ cd ../frontend && npm install && npm run dev   # http://localhost:5173
 **Tests:**
 ```bash
 cd backend && pip install -r requirements.txt -r requirements-dev.txt
-pytest                                 # 8 tests, no data files needed
+pytest                                 # 9 tests, no data files needed
 ```
 The suite builds its fixtures in memory rather than reading `backend/data/`, because the generated sample data has no missing values and so exercises none of the flag/degradation logic. Don't "fix" a test by pointing it at the CSVs.
 
@@ -324,14 +328,18 @@ In Docker the frontend proxies `/api` to the backend container by service name (
 
 ### Data
 
-**The 8 IPEDS filenames are exact.** Drop them in `backend/data/`:
+**The 7 IPEDS filenames are exact.** Drop them in `backend/data/`:
 ```
-HD2022.csv  SFA2122_P1.csv  SFA2122_P2.csv  IC2022_AY.csv
-ADM2022.csv  DRVADM2022.csv  DRVGR2022.csv  IC2022Mission.csv
+HD2022.csv  SFA2122.csv  IC2022_AY.csv  ADM2022.csv
+DRVADM2022.csv  DRVGR2022.csv  IC2022Mission.csv
 ```
 A missing file raises a `FileNotFoundError` naming the file — that error means a name mismatch, not corrupt data.
 
 **`build_dataset()` is `lru_cache`d.** The dataset loads once per process, so swapping CSVs has **no effect until the backend restarts.** If your numbers don't change after replacing the data, that's why.
+
+**`IC2022Mission.csv` does not exist.** IPEDS published `IC{year}Mission` for **2004–2007 only**; there is no 2022 equivalent anywhere in the catalog, and the only "mission" hits in the IC2022/HD2022 dictionaries are substrings of "admission". The reference app's claim to index official mission statements from this file therefore cannot be literally true. The RAG feature currently runs on generated text — see §10.
+
+**Use the revised files.** IPEDS archives carry both provisional and revised releases (`adm2022.csv` and `adm2022_rv.csv`). Prefer `_rv` (revised September 2024). For the columns this app reads the counts are identical either way.
 
 **Sample vs real data.** `scripts/make_sample_data.py` writes 300 synthetic colleges so the app runs without the real dataset. Sample data will produce plausible-looking but meaningless rankings — check which one you're on before drawing any conclusion from the output. Real files overwrite the samples (same names).
 
@@ -372,8 +380,9 @@ Nothing has been deployed yet, so none of the GCP steps are battle-tested. Three
 1. **Scoring fidelity** — the Value Score/percentile logic is reconstructed; confirm it's statistically sound (NaN handling in percentile ranks, ties, whether equal weighting is defensible) and matches the intended definition. §6 tracks resolved vs open.
 2. **COA construction** — `COA` is summed from tuition + charge components when present, else falls back to tuition. Verify this matches how net price is measured, so `Discount` and `Aid Share` are apples-to-apples. This is §6's top open item.
 3. **Reference app showed intermittent `502`s** on `/api/*` — worth reproducing under load; check backend startup time, resource limits, readiness probes. The likely cause is in the manifests, not the code: see §9 Cloud and `PROJECT_STATE.md` Phase 7.
-4. **Test coverage is partial** — `backend/tests/test_scoring.py` covers scoring and the flag split (8 tests). Still missing: `data.py` load/merge/clean, API tests for malformed params, and the RAG endpoint with and without a key.
+4. **Test coverage is partial** — `backend/tests/test_scoring.py` covers scoring, the flag split and net-price coalescing (9 tests). Still missing: `data.py` load/merge/clean, API tests for malformed params, and the RAG endpoint with and without a key.
 5. **RAG fallback** — if `sentence-transformers` isn't installed it silently uses TF-IDF; retrieval quality differs. Confirm which is intended and make it explicit. See §9.
+5a. **The RAG feature has no real data source.** `IC2022Mission.csv` does not exist — IPEDS stopped publishing mission statements after 2007 (§9). The options are the 2007 file (real but 15 years stale, and coverage against the 2022 universe is unmeasured), another source, or keeping generated text and labelling it plainly in the UI. Decide before presenting the feature as fact.
 6. **Frontend bundle is large** (Plotly). Fine for a demo; could be code-split.
 7. **No error states in the UI** — `getMeta()` has no `.catch()`, so a backend failure leaves the page on a permanent "Loading…" with no retry. Given the known 502 risk, this is the most likely failure a real user would hit.
 8. **Percentage scaling** — admissions/graduation rates are divided by 100 only when values look like percentages; check this heuristic against the real IPEDS files.

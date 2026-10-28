@@ -10,7 +10,7 @@
 
 **Option A — Docker (whole stack at once):**
 ```bash
-# 1. generate demo data (or drop the real 8 IPEDS CSVs into backend/data/)
+# 1. generate demo data (or drop the real 7 IPEDS CSVs into backend/data/)
 cd backend && pip install -r requirements.txt && python scripts/make_sample_data.py && cd ..
 # 2. (optional) enable AI answers
 echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
@@ -36,19 +36,19 @@ npm run dev                                 # http://localhost:5173 (proxies /ap
 ```bash
 cd backend
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                                      # 8 tests, no data files required
+pytest                                      # 9 tests, no data files required
 ```
 Fixtures are built in memory, not read from `backend/data/` — the sample data has no
 missing values, so it exercises none of the data-quality logic.
 
 ## Using the real IPEDS data
-Replace the sample files in `backend/data/` with the real 8 files (same names):
-`HD2022.csv, SFA2122_P1.csv, SFA2122_P2.csv, IC2022_AY.csv, ADM2022.csv, DRVADM2022.csv, DRVGR2022.csv, IC2022Mission.csv`. Restart the backend.
+Replace the sample files in `backend/data/` with the real 7 files (same names):
+`HD2022.csv, SFA2122.csv, IC2022_AY.csv, ADM2022.csv, DRVADM2022.csv, DRVGR2022.csv, IC2022Mission.csv`. Restart the backend.
 
 ## Structure
 ```
 backend/    FastAPI app — data pipeline, scoring, RAG, API
-  app/data.py       load + clean + merge the 8 files
+  app/data.py       load + clean + merge the 7 files
   app/scoring.py    MGI, Aid Share, Value Score, Legacy composite  ← audit the formulas here
   app/rag.py        mission-statement embeddings + retrieval + Claude answer
   app/main.py       the /api/* endpoints
