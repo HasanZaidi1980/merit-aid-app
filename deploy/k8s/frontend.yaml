@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: frontend }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: frontend } }
+  template:
+    metadata: { labels: { app: frontend } }
+    spec:
+      containers:
+        - name: frontend
+          image: REGION-docker.pkg.dev/PROJECT_ID/merit-aid/frontend:latest
+          ports: [{ containerPort: 80 }]
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "250m", memory: "128Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: frontend }
+spec:
+  selector: { app: frontend }
+  ports: [{ port: 80, targetPort: 80 }]

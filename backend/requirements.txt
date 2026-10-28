@@ -1,0 +1,9 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.1
+anthropic==0.39.0
+# Optional local-embeddings upgrade (heavy: pulls torch). The app falls back to
+# TF-IDF retrieval automatically if this isn't installed.
+# sentence-transformers==3.0.1

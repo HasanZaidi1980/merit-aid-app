@@ -1,0 +1,16 @@
+# dependencies / build output
+node_modules/
+dist/
+__pycache__/
+*.pyc
+# virtualenvs (backend/venv and backend/myenv already exist locally and are
+# Python 3.13 builds — this project pins to Python 3.12, see README)
+venv/
+myenv/
+.venv/
+env/
+# data + generated index (never commit the dataset or secrets)
+backend/data/
+backend/index/
+index/
+.env

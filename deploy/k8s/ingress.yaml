@@ -1,0 +1,17 @@
+# Google Cloud Load Balancer via GKE Ingress. Routes / to frontend, /api to backend.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: merit-aid
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: { service: { name: backend, port: { number: 8000 } } }
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: frontend, port: { number: 80 } } }

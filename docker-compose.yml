@@ -1,0 +1,24 @@
+# Run the whole stack locally with: docker compose up --build
+# Frontend on http://localhost:8080  (proxies /api to backend)
+services:
+  backend:
+    build: ./backend
+    environment:
+      - DATA_DIR=/data
+      - INDEX_DIR=/index
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}   # set in a .env file to enable AI answers
+    volumes:
+      - ./backend/data:/data        # put the 8 IPEDS CSVs here
+      - backend_index:/index        # persisted vector index
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend_index:
