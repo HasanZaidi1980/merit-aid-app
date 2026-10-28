@@ -16,9 +16,12 @@ Dataset stats + defaults + the toggleable dimensions. Real response:
 {
   "colleges_in_dataset": 1907,
   "median_aid_share": 0.3184,
+  "median_mgi": 0.4515,
   "net_price_min": 2200,
   "net_price_max": 63997,
   "flagged_count": 1352,
+  "data_gap_count": 0,
+  "unscoreable_count": 0,
   "sat_coverage": 985,
   "defaults": {
     "max_net_price": 25000,
@@ -43,19 +46,34 @@ Ranked shortlist. Query params (all observed):
 - `top_n` (e.g. `20`)
 - `exclude_flagged` (`true`/`false`)
 
-Each college row has these 23 fields:
+Each college row has these 24 fields:
 ```
 RANK, UNITID, INSTNM, STABBR, CONTROL_LABEL,
 COA, COA_COMPLETE, TUITION2, IGRNT_A, NET_PRICE_MID, DISCOUNT,
 ADMISSIONS_RATE, GRAD_RATE, SATVR75, SATMT75, SAT_TOTAL_75,
-AID_SHARE, VALUE_SCORE, COMPONENTS_USED, RISK_FLAGS,
+AID_SHARE, VALUE_SCORE, COMPONENTS_USED, RISK_FLAGS, DATA_GAPS,
 MGI, NET_PRICE_RATIO, COMPOSITE_LEGACY
 ```
+
+> **Changed 2026-10-28** — this reconstruction now returns **24** fields, not the 23
+> observed on the reference app. `DATA_GAPS` is new and `RISK_FLAGS` has narrowed; see
+> the note below. The addition is backward-compatible: nothing was renamed or removed,
+> so a client reading the original 23 is unaffected.
 Notes:
-- `VALUE_SCORE` (0–100) = mean of 3 percentile ranks: affordability, grad rate, aid generosity.
+- `VALUE_SCORE` (0–100) = mean of 3 percentile ranks: affordability, grad rate, aid
+  generosity. A college missing any component has **no** Value Score and is excluded
+  from every ranking — it is never imputed or scored on a subset.
 - `COMPOSITE_LEGACY` = the original assignment formula, retained for comparison.
 - `AID_SHARE` = institutional grants ÷ total sticker (COA).
-- `COMPONENTS_USED` / `RISK_FLAGS` = which inputs were available / data-quality warnings (graceful degradation).
+- `COMPONENTS_USED` = which inputs were available for that row.
+- `RISK_FLAGS` = problems that make the **ranking** untrustworthy: `incomplete_coa`
+  (sticker reconstructed from only some charge components, so Discount and Aid Share
+  are measured against an understated total) and `no_grad_rate`. The
+  `exclude_flagged` parameter drops exactly these rows and nothing else.
+- `DATA_GAPS` = missing fields that affect **display only**: `no_sat`,
+  `no_admit_rate`. Neither feeds Value Score, so neither ever removes a college from
+  the ranking. They previously lived in `RISK_FLAGS`, which meant the default view
+  discarded most of the dataset over fields with no bearing on the result.
 
 ### `GET /api/rag/status`
 ```json

@@ -139,11 +139,19 @@ Unbounded and heavily skewed — don't treat it as comparable to Value Score.
 `max_net_price=25000`, `mgi_at_least_median=True`, `top_n=20`, `exclude_flagged=True`.
 
 ### Data-quality bookkeeping
-- `COMPONENTS_USED` — comma-separated list of which inputs were present for that row.
-- `RISK_FLAGS` — any of `incomplete_coa`, `no_sat`, `no_grad_rate`, `no_admit_rate`.
 
-`exclude_flagged=True` is strict: a college missing **only** its SAT figure is dropped
-along with genuinely incomplete rows. That is a large share of the dataset.
+Two separate columns, split by whether the missing field actually affects the result:
+
+- `COMPONENTS_USED` — which inputs were present for that row.
+- `RISK_FLAGS` — problems that make the **ranking** untrustworthy: `incomplete_coa`,
+  `no_grad_rate`. `exclude_flagged` gates on this column and nothing else.
+- `DATA_GAPS` — missing fields that affect **display only**: `no_sat`,
+  `no_admit_rate`. These never remove a college from the ranking.
+
+`COA_COMPLETE` is `True` only when **every** charge component used to build COA was
+present. A college reporting tuition but no room and board gets a COA (see §2) but is
+marked incomplete, because its Discount and Aid Share are measured against an
+understated sticker.
 
 ---
 
@@ -165,46 +173,41 @@ along with genuinely incomplete rows. That is a large share of the dataset.
   the bar whenever the user changed the slider and (b) set it far above "more generous
   than typical", because low net price is largely *caused* by large grants. On a test
   fixture the post-filter median was 0.691 against a dataset median of 0.596.
+- **`exclude_flagged` dropped colleges over fields that don't affect the score.**
+  `RISK_FLAGS` now holds only scoring-relevant problems (`incomplete_coa`,
+  `no_grad_rate`); `no_sat` and `no_admit_rate` moved to a new `DATA_GAPS` column.
+  Neither feeds Value Score, so neither removes a college from the ranking any more.
+  On the reference app 1352 of 1907 colleges were flagged while SAT coverage was only
+  985, meaning the default view was likely discarding most of the dataset — and
+  hiding good-value colleges — for cosmetic reasons.
+- **`COA_COMPLETE` was always true.** It tested `COA.notna()`, but COA is built with
+  `min_count=1` and falls back to tuition, so it was never null and `incomplete_coa`
+  never fired. It now means *every* charge component was present. Without this,
+  splitting the flags would have left `exclude_flagged` with nothing to do.
+- **`/api/meta` reported a median the filter doesn't use.** It exposed
+  `median_aid_share` (grant ÷ COA) while `mgi_at_least_median` applies a median of
+  `MGI` (grant ÷ tuition). `median_mgi` is now reported alongside it, plus
+  `data_gap_count` and `unscoreable_count`.
 
 ### Still open
 
 Ordered by how much they could distort results.
 
-1. **`exclude_flagged` gates on fields that don't affect the score.** `RISK_FLAGS`
-   includes `no_sat` and `no_admit_rate`, but neither feeds Value Score — they are
-   display/chart dimensions only. The reference app reported 1352 of 1907 colleges
-   flagged with SAT coverage of just 985, so the default view may be discarding most
-   of the dataset for reasons with no bearing on the ranking, hiding genuinely
-   good-value colleges. Suggested fix: split scoring-relevant flags
-   (`incomplete_coa`) from cosmetic data gaps (`no_sat`, `no_admit_rate`) and have
-   `exclude_flagged` consider only the former. **This changes the meaning of a field
-   in the API contract, so it needs a decision before implementing.**
-
-2. **`/api/meta` reports the wrong median for the filter it describes.** It exposes
-   `median_aid_share` (grant ÷ COA) while the filter applies a median of `MGI`
-   (grant ÷ tuition). The number available to the UI is not the threshold being
-   applied. Either report `median_mgi` as well, or gate the filter on `AID_SHARE` so
-   there is a single generosity concept.
-
-3. **`min_count=1` on COA.** A college with tuition only gets `COA == TUITION2` and is
-   not marked `incomplete_coa`, which inflates its apparent affordability and deflates
-   its Aid Share. Consider requiring all components, or flagging partial COA.
-
-4. **COA vs net price comparability.** `DISCOUNT` and `NET_PRICE_RATIO` assume `COA`
+1. **COA vs net price comparability.** `DISCOUNT` and `NET_PRICE_RATIO` assume `COA`
    and `NPT442` cover the same basket of costs. IPEDS net price is defined against
    *total* cost of attendance including allowances this COA doesn't reconstruct, so
    the two may not be apples-to-apples. Verify against IPEDS documentation.
 
-5. **Percent-scaling heuristic.** Dividing by 100 only when `max > 1.5` is fragile: a
+2. **Percent-scaling heuristic.** Dividing by 100 only when `max > 1.5` is fragile: a
    real dataset where every rate happens to be ≤ 1.5 (or already fractional) would be
    mis-scaled with no error. Prefer an explicit per-column declaration.
 
-6. **Equal weighting is an assertion, not a finding.** ⅓/⅓/⅓ was chosen because the
+3. **Equal weighting is an assertion, not a finding.** ⅓/⅓/⅓ was chosen because the
    reference app described equal weight. Whether that produces sensible rankings on
    the real IPEDS data is untested — check the Value Score distribution and each
    component's correlation with the final rank.
 
-7. **Weights are not configurable.** Exposing them (and reporting them in
+4. **Weights are not configurable.** Exposing them (and reporting them in
    `/api/meta`) would make the methodology auditable instead of implicit.
 
 ---
