@@ -167,6 +167,7 @@ The AI feature works without a key (returns retrieved passages); set `ANTHROPIC_
 merit-aid-app/
   PROJECT_BRIEF.md          ← this file
   HANDOFF.md                current status + how Claude Code and Cowork split the work
+  PROJECT_STATE.md          status at a glance + phased roadmap, incl. the 2023-24 data upgrade
   README.md                 how to run
   ANALYSIS.md               what the live reference app is + cloud/hosting findings
   observed-api-contract.md  exact endpoints + the 24-field schema this app returns

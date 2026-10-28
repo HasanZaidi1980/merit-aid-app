@@ -57,13 +57,15 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
 - Local `pip install scikit-learn` fails on Python 3.13 (no wheel) — not needed locally; Docker builds it on 3.12. Local step only needs `pandas numpy` for sample data.
 - `frontend/nginx.conf` and `frontend/.dockerignore` had been lost in an earlier cleanup and were missing from the user's copy — **recreated**; the Docker build needs `nginx.conf`.
 
-## Suggested next steps (in order)
+## Next steps
 
-1. `git init` + push to the user's GitHub (github.com/HasanZaidi1980) so there's version control.
-2. Add a `pytest` suite for `data.py` + `scoring.py`, and FastAPI `TestClient` tests for the endpoints.
-3. Validate scoring against the real IPEDS dataset; make weights configurable and documented.
-4. Swap in real IPEDS data; sanity-check rankings.
-5. Only then attempt GCP deploy per `DEPLOYMENT.md` (remember the teardown step to avoid billing).
+**See `PROJECT_STATE.md`** — it owns the roadmap, phase by phase, with a "done when"
+for each. Don't keep a second list here; it drifts.
+
+Where things stand right now: git is done, the first test suite is in, and the real
+IPEDS 2022-23 download is in progress. The gate on everything else is Phase 2 —
+validating the pipeline against the reference app's published numbers before any
+further change, including the data-year upgrade.
 
 ## Guardrails
 
@@ -76,7 +78,8 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
 ```
 merit-aid-app/
   HANDOFF.md              ← this file (current status)
-  PROJECT_BRIEF.md        full architecture, metrics, task list — read next
+  PROJECT_STATE.md        status + the full roadmap to completion — read next
+  PROJECT_BRIEF.md        full architecture, metrics, task list
   README.md               how to run
   ANALYSIS.md             what the reference app is + cloud/hosting findings
   observed-api-contract.md  exact endpoints + 23-field schema
