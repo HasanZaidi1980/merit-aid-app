@@ -1,7 +1,7 @@
 # Merit Aid Finder — Reconstruction
 
 > **What this is:** a from-scratch, working rebuild that matches the *observable behavior*
-> of the live app at `http://136.68.78.253/` — same API endpoints, same 23-field data
+> of the live app at `http://136.68.78.253/` — same API endpoints, same data
 > schema, same charts, same scoring. It is **NOT** a copy of your friend's source code
 > (that can't be recovered from a URL — see `ANALYSIS.md`). Treat it as a faithful
 > functional twin, not a byte-for-byte replica.
@@ -31,6 +31,15 @@ cd frontend
 npm install
 npm run dev                                 # http://localhost:5173 (proxies /api to :8000)
 ```
+
+## Tests
+```bash
+cd backend
+pip install -r requirements.txt -r requirements-dev.txt
+pytest                                      # 8 tests, no data files required
+```
+Fixtures are built in memory, not read from `backend/data/` — the sample data has no
+missing values, so it exercises none of the data-quality logic.
 
 ## Using the real IPEDS data
 Replace the sample files in `backend/data/` with the real 8 files (same names):

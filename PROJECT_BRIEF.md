@@ -81,8 +81,8 @@ Default filters (also user-adjustable): net price ≤ $25,000, MGI ≥ dataset m
 
 ## 6. API contract
 
-- `GET /api/meta` — dataset stats, default filter values, and the list of toggleable data dimensions.
-- `GET /api/colleges?max_net_price=&mgi_at_least_median=&top_n=&exclude_flagged=` — ranked shortlist; each row has 23 fields (see `observed-api-contract.md`).
+- `GET /api/meta` — dataset stats (including `median_mgi`, the threshold `mgi_at_least_median` actually applies), default filter values, and the list of toggleable data dimensions.
+- `GET /api/colleges?max_net_price=&mgi_at_least_median=&top_n=&exclude_flagged=` — ranked shortlist; each row has 24 fields (see `observed-api-contract.md`).
 - `GET /api/rag/status` — `{ index_ready, api_key_set }`.
 - `POST /api/rag/query` — body `{ question, unitids?, college_names? }` → `{ answer, sources, mode }`. Retrieval is scoped to the currently shown colleges.
 - `GET /api/health` — liveness.
@@ -105,7 +105,19 @@ uvicorn app.main:app --reload          # http://localhost:8000
 cd ../frontend && npm install && npm run dev   # http://localhost:5173
 ```
 
+**Tests:**
+```bash
+cd backend && pip install -r requirements.txt -r requirements-dev.txt
+pytest                                 # 8 tests, no data files needed
+```
+The suite builds its fixtures in memory rather than reading `backend/data/`, because
+the generated sample data has no missing values and so exercises none of the
+flag/degradation logic. Don't "fix" a test by pointing it at the CSVs.
+
 The AI feature works without a key (returns retrieved passages); set `ANTHROPIC_API_KEY` for synthesized answers.
+
+> **Note on Windows + old PowerShell:** `&&` is rejected — run the commands one per
+> line. See `GOTCHAS.md`.
 
 ---
 
@@ -114,10 +126,10 @@ The AI feature works without a key (returns retrieved passages); set `ANTHROPIC_
 1. **Scoring fidelity** — the Value Score/percentile logic is reconstructed; confirm it's statistically sound (NaN handling in percentile ranks, ties, whether equal weighting is defensible) and matches the intended definition.
 2. **COA construction** — `COA` is summed from tuition + charge components when present, else falls back to tuition. Verify this matches how net price is measured, so `Discount` and `Aid Share` are apples-to-apples.
 3. **Reference app showed intermittent `502`s** on `/api/*` — worth reproducing under load; check backend startup time, resource limits, readiness probes.
-4. **No automated tests exist** — there is no test suite yet.
+4. **Test coverage is partial** — `backend/tests/test_scoring.py` covers scoring and the flag split (8 tests). Still missing: `data.py` load/merge/clean, API tests for malformed params, and the RAG endpoint with and without a key.
 5. **RAG fallback** — if `sentence-transformers` isn't installed it silently uses TF-IDF; retrieval quality differs. Confirm which is intended and make it explicit.
 6. **Frontend bundle is large** (Plotly). Fine for a demo; could be code-split.
-7. **Data-quality flags** (`RISK_FLAGS`, `COMPONENTS_USED`) — verify the graceful-degradation logic when a dimension is toggled off never produces misleading rankings.
+7. **Data-quality flags** — reworked since this list was written. `RISK_FLAGS` now carries only scoring-relevant problems and `DATA_GAPS` carries display-only ones; `exclude_flagged` gates on the former. Covered by tests. `FORMULAS.md` tracks what's resolved vs still open — read that rather than this list for scoring status.
 8. **Percentage scaling** — admissions/graduation rates are divided by 100 only when values look like percentages; check this heuristic against the real IPEDS files.
 
 ---
@@ -125,7 +137,7 @@ The AI feature works without a key (returns retrieved passages); set `ANTHROPIC_
 ## 9. Suggested tasks for Cowork
 
 **Test**
-- Add a `pytest` suite for `data.py` and `scoring.py` (metric math, filters, NaN edge cases, empty-result handling).
+- ~~Add a `pytest` suite for `scoring.py`~~ — done, `backend/tests/test_scoring.py`. Extend it to `data.py` (load/merge/clean, sentinel handling, empty-result handling).
 - Add API tests (FastAPI `TestClient`) for all endpoints, including malformed query params and the RAG endpoint with/without an API key.
 - Add a smoke test that boots the stack and hits `/api/health`, `/api/meta`, `/api/colleges`.
 
@@ -154,15 +166,19 @@ The AI feature works without a key (returns retrieved passages); set `ANTHROPIC_
 ```
 merit-aid-app/
   PROJECT_BRIEF.md          ← this file
+  HANDOFF.md                current status + how Claude Code and Cowork split the work
   README.md                 how to run
   ANALYSIS.md               what the live reference app is + cloud/hosting findings
-  observed-api-contract.md  exact endpoints + 23-field schema observed live
+  observed-api-contract.md  exact endpoints + the 24-field schema this app returns
+  FORMULAS.md               every metric, with resolved vs still-open scoring issues
+  GOTCHAS.md                environment traps (PowerShell, Python 3.13, missing files)
   DEPLOYMENT.md             GCP deploy steps + teardown
   docker-compose.yml
   backend/
     app/{config,data,scoring,rag,main}.py
     scripts/make_sample_data.py
-    requirements.txt  Dockerfile
+    tests/test_scoring.py   scoring + flag-split tests (in-memory fixtures)
+    conftest.py  requirements.txt  requirements-dev.txt  Dockerfile
   frontend/
     src/{App.jsx,Plot.jsx,api.js,main.jsx,styles.css}
     package.json  vite.config.js  index.html  nginx.conf  Dockerfile
