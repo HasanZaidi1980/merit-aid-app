@@ -1,17 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
 import Plot from './Plot.jsx';
-import { getMeta, getColleges, getRagStatus, askRag } from './api.js';
+import { getMeta, getColleges, getRagStatus, getDistributions, askRag } from './api.js';
+import { COLUMN_TERMS } from './education/glossary.js';
+import { fmt$, num, pct } from './education/format.js';
+import Explain from './components/Explain.jsx';
+import Sandbox from './components/Sandbox.jsx';
+import Compare from './components/Compare.jsx';
+import MeritNote from './components/MeritNote.jsx';
 
 const NAVY = '#1E2761', GREEN = '#2C7A4B', RED = '#c2453b';
-const fmt$ = (v) => v == null ? '—' : '$' + Math.round(v).toLocaleString();
-const pct = (v) => v == null ? '—' : (v * 100).toFixed(0) + '%';
 // DATA_GAPS markers are display-only — a gap never drops a college from the ranking.
 const GAP_LABELS = { no_sat: 'no SAT', no_admit_rate: 'no admit rate' };
 
 export default function App() {
   const [meta, setMeta] = useState(null);
+  const [metaError, setMetaError] = useState(null);
+  const [dist, setDist] = useState(null);
   const [dims, setDims] = useState({});           // dimension key -> on/off
-  const [filters, setFilters] = useState({ maxNetPrice: 25000, mgiMedian: true, topN: 20, excludeFlagged: true });
+  const [filters, setFilters] = useState({
+    maxNetPrice: 25000, mgiMedian: true, topN: 20,
+    excludeFlagged: true, excludeNoMerit: false,
+  });
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sort, setSort] = useState({ key: 'RANK', dir: 1 });
@@ -21,12 +30,19 @@ export default function App() {
   const [asking, setAsking] = useState(false);
 
   useEffect(() => {
-    getMeta().then((m) => {
-      setMeta(m);
-      setDims(Object.fromEntries(m.dimensions.map((d) => [d.key, true])));
-    });
+    // Without the catch, a backend that is down leaves `meta` null forever and the
+    // whole app sits on "Loading…" with nothing to explain why.
+    getMeta().then(setMeta).catch((e) => setMetaError(String(e.message || e)));
     getRagStatus().then((s) => setRag(s)).catch(() => {});
+    // Education distributions are optional: if this fails the ranking still works,
+    // so the education section hides itself rather than breaking the page.
+    getDistributions().then(setDist).catch(() => {});
   }, []);
+
+  // Dimension toggles key off /api/meta, so they wait for it.
+  useEffect(() => {
+    if (meta) setDims(Object.fromEntries(meta.dimensions.map((d) => [d.key, true])));
+  }, [meta]);
 
   useEffect(() => {
     setLoading(true);
@@ -46,6 +62,7 @@ export default function App() {
 
   const names = Object.fromEntries(rows.map((r) => [r.UNITID, r.INSTNM]));
   const short = (n) => n && n.length > 22 ? n.slice(0, 20) + '…' : n;
+  const needOnlyShown = rows.filter((r) => r.MERIT_POLICY === 'need_only').length;
 
   function downloadCSV() {
     const cols = Object.keys(rows[0] || {});
@@ -116,6 +133,19 @@ export default function App() {
     text: labels, hovertemplate: '%{text}<br>Net %{x:$,}<br>Grad %{y:.0%}<extra></extra>',
   }];
 
+  if (metaError) {
+    return (
+      <div className="fatal">
+        <h2>Can’t reach the backend</h2>
+        <p>
+          <code>/api/meta</code> failed: {metaError}. The API has to be running for the
+          rankings to load — start it with <code>uvicorn app.main:app --reload</code>, or
+          bring the whole stack up with <code>docker compose up</code>.
+        </p>
+        <button className="btn" onClick={() => window.location.reload()}>Retry</button>
+      </div>
+    );
+  }
   if (!meta) return <div className="loading" style={{ padding: 40 }}>Loading…</div>;
 
   const dimList = meta.dimensions;
@@ -124,12 +154,20 @@ export default function App() {
     ['COA', 'Sticker'], ['IGRNT_A', 'Avg Grant'], ['NET_PRICE_MID', 'Net'],
     ['DISCOUNT', 'Discount'], ['ADMISSIONS_RATE', 'Admit'], ['GRAD_RATE', 'Grad'],
     ['SAT_TOTAL_75', 'SAT 75'], ['AID_SHARE', 'Aid Share'], ['VALUE_SCORE', 'Value'],
-    ['COMPOSITE_LEGACY', 'Legacy'], ['DATA_GAPS', 'Gaps', 'l'],
+    ['COMPOSITE_LEGACY', 'Legacy'], ['MERIT_POLICY', 'Merit aid', 'l'],
+    ['DATA_GAPS', 'Gaps', 'l'],
   ];
   const cell = (r, k) => {
     if (['COA', 'IGRNT_A', 'NET_PRICE_MID', 'DISCOUNT'].includes(k)) return fmt$(r[k]);
     if (['ADMISSIONS_RATE', 'GRAD_RATE', 'AID_SHARE'].includes(k)) return pct(r[k]);
-    if (['VALUE_SCORE', 'COMPOSITE_LEGACY'].includes(k)) return r[k]?.toFixed(1) ?? '—';
+    if (['VALUE_SCORE', 'COMPOSITE_LEGACY'].includes(k)) return num(r[k], 1);
+    if (k === 'MERIT_POLICY') {
+      // Blank means unchecked, not "offers merit aid" — the dash has to read as
+      // absence of information, so only the positive finding gets a label.
+      return r[k] === 'need_only'
+        ? <span className="tag-need" title="Publicly awards need-based aid only">need-based only</span>
+        : '—';
+    }
     if (k === 'DATA_GAPS') {
       const gaps = (r[k] || '').split(',').filter(Boolean);
       return gaps.length ? gaps.map((g) => GAP_LABELS[g] ?? g).join(', ') : '—';
@@ -166,9 +204,10 @@ export default function App() {
         <label className="toggle">
           <input type="checkbox" checked={filters.mgiMedian}
             onChange={() => setFilters({ ...filters, mgiMedian: !filters.mgiMedian })} />
-          {/* Show the threshold actually applied. median_aid_share is a different
-              ratio (grant / COA), so it can't stand in for it here. */}
-          MGI ≥ median{meta.median_mgi != null ? ` (${meta.median_mgi.toFixed(2)})` : ''}
+          {/* Was labelled "MGI ≥ median". MGI is grant ÷ tuition over *all*
+              institutional grant aid, so calling it merit was the app's central
+              inaccuracy — the label now says what the ratio is. */}
+          Grant ÷ Tuition ≥ median{meta.median_mgi != null ? ` (${meta.median_mgi.toFixed(2)})` : ''}
         </label>
         <label className="toggle">
           <input type="checkbox" checked={filters.excludeFlagged}
@@ -180,12 +219,25 @@ export default function App() {
           sticker price. A missing SAT or admissions rate never removes a college;
           those show up in the Gaps column instead.
         </p>
+        <label className="toggle">
+          <input type="checkbox" checked={filters.excludeNoMerit}
+            onChange={() => setFilters({ ...filters, excludeNoMerit: !filters.excludeNoMerit })} />
+          Hide need-based-only
+        </label>
+        <p className="hint">
+          Hides {meta.no_merit_aid_count} colleges on a curated list that publicly award
+          no merit scholarships. Off by default: the rest are <em>unchecked</em>, not
+          cleared.
+        </p>
       </aside>
 
       <main className="main">
         <div className="header">
           <h1>Hidden Deals: Institutional Aid vs Sticker Price</h1>
-          <p>4-year colleges ranked by all-around value · U.S. Dept. of Education IPEDS 2022-23</p>
+          <p>
+            4-year colleges ranked by all-around value · U.S. Dept. of Education IPEDS 2022-23
+            {' · '}<a href="#learn">What do these numbers mean?</a>
+          </p>
         </div>
 
         <div className="stats">
@@ -194,6 +246,8 @@ export default function App() {
           <div className="stat"><div className="n">{pct(meta.median_aid_share)}</div><div className="l">Median aid share</div></div>
           <div className="stat"><div className="n">{rows[0] ? fmt$(rows[0].DISCOUNT) : '—'}</div><div className="l">Top pick discount</div></div>
         </div>
+
+        <MeritNote meta={meta} shown={needOnlyShown} />
 
         {loading ? <div className="loading">Crunching the rankings…</div> : (
         <>
@@ -226,9 +280,24 @@ export default function App() {
             <Plot data={bubble()} layout={{ xaxis: { tickformat: '$,.0s', title: 'Net price' }, yaxis: { tickformat: '.0%', title: '4-yr grad rate' } }} style={{ height: 360 }} />
           </div>
 
+          {/* ---- education section ---- */}
+          {dist && (
+            <section id="learn" className="learn">
+              <div className="learn-head">
+                <h2>Learn the numbers</h2>
+                <p>
+                  Six figures decide everything on this page. Build a college to see how they
+                  pull against each other, then put two real ones side by side.
+                </p>
+              </div>
+              <Sandbox dist={dist} />
+              <Compare rows={rows} dist={dist} />
+            </section>
+          )}
+
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div><h3>Comparison table</h3><p className="cap">Every metric for the shortlist — click any header to sort. "Legacy" is the original assignment formula.</p></div>
+              <div><h3>Comparison table</h3><p className="cap">Every metric for the shortlist — click any header to sort, or any <b>?</b> for what it means. "Legacy" is the original assignment formula.</p></div>
               <button className="btn" onClick={downloadCSV}>⬇ Download CSV</button>
             </div>
             <div style={{ overflowX: 'auto' }}>
@@ -236,6 +305,7 @@ export default function App() {
                 <thead><tr>{cols.map(([k, lbl, cls]) => (
                   <th key={k} className={cls || ''} onClick={() => setSort({ key: k, dir: sort.key === k ? -sort.dir : 1 })}>
                     {lbl}{sort.key === k ? (sort.dir === 1 ? ' ▲' : ' ▼') : ''}
+                    {COLUMN_TERMS[k] && <Explain term={COLUMN_TERMS[k]} dist={dist} />}
                   </th>))}</tr></thead>
                 <tbody>{sorted.map((r) => (
                   <tr key={r.UNITID}>{cols.map(([k, , cls]) => (

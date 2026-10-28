@@ -138,6 +138,23 @@ def meta() -> dict:
         # Colleges with no Value Score at all; excluded from every ranking.
         "unscoreable_count": int(df["VALUE_SCORE"].isna().sum()),
         "sat_coverage": int(df["SAT_TOTAL_75"].notna().sum()),
+        # Colleges on the curated need-only list that survive the pipeline. Shown so
+        # the UI can state the coverage of that list rather than imply it is complete.
+        "no_merit_aid_count": int((df["MERIT_POLICY"] == "need_only").sum()),
+        # What the generosity metrics actually measure. Surfaced through the API so
+        # the correction travels with the data instead of living only in UI copy.
+        "metric_notes": {
+            "grant_aid": (
+                "IGRNT_A is total institutional grant aid — need-based and merit "
+                "awards combined. IPEDS publishes no split, so MGI and Aid Share "
+                "measure generosity, not merit."
+            ),
+            "merit_policy": (
+                "MERIT_POLICY is 'need_only' for colleges on a curated list of "
+                "institutions that publicly award no merit scholarships, and "
+                "'unknown' otherwise. Unknown means unchecked."
+            ),
+        },
         "defaults": config.DEFAULTS,
         "dimensions": [
             {"key": "sticker", "label": "Total Sticker (COA)", "column": "COA",

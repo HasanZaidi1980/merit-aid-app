@@ -1,6 +1,8 @@
 """Metric + score calculations. Kept separate so the formulas are easy to audit."""
 import pandas as pd
 
+from .merit_policy import NEED_ONLY, merit_policy
+
 
 def pct_rank(series: pd.Series, higher_is_better: bool = True) -> pd.Series:
     """Percentile rank 0..1. NaNs stay NaN."""
@@ -25,10 +27,15 @@ def add_metrics(df: pd.DataFrame) -> pd.DataFrame:
     # Discount = what the sticker hides vs what mid-income families actually pay.
     df["DISCOUNT"] = df["COA"] - df["NET_PRICE_MID"]
 
-    # MGI (original assignment): grant / tuition sticker.
+    # MGI (original assignment): grant / tuition sticker. Named "Merit Generosity
+    # Index" by the original brief, but IGRNT_A is total institutional grant aid --
+    # need-based and merit combined, with no IPEDS variable splitting them. It
+    # measures generosity, not merit; the UI labels it "Grant ÷ Tuition" for that
+    # reason. See merit_policy.py.
     df["MGI"] = df["IGRNT_A"] / df["TUITION2"]
 
     # Aid share: grant as a fraction of the FULL sticker (COA). Headline generosity.
+    # Same caveat as MGI -- this is all institutional grant aid, not merit aid.
     df["AID_SHARE"] = df["IGRNT_A"] / df["COA"]
 
     # Net price ratio: share of sticker a family still pays. Lower = better.
@@ -46,6 +53,12 @@ def add_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
     # --- Legacy composite (the original formula, kept for comparison) ---
     df["COMPOSITE_LEGACY"] = (df["MGI"] + df["GRAD_RATE"]) / df["NET_PRICE_RATIO"]
+
+    # --- merit-aid policy ---
+    # Not a data-quality flag: `need_only` is a fact about the college, not a gap
+    # in our data, so it never joins RISK_FLAGS or DATA_GAPS and never affects a
+    # score. It only drives disclosure in the UI and the opt-in filter below.
+    df["MERIT_POLICY"] = merit_policy(df["UNITID"])
 
     # --- data-quality bookkeeping ---
     df["COMPONENTS_USED"] = df.apply(_components_used, axis=1)
@@ -97,8 +110,15 @@ def _data_gaps(row) -> str:
 
 
 def rank_and_filter(df: pd.DataFrame, max_net_price: float, mgi_at_least_median: bool,
-                    top_n: int, exclude_flagged: bool) -> pd.DataFrame:
-    """Apply the same filters the live app exposes, then rank by Value Score."""
+                    top_n: int, exclude_flagged: bool,
+                    exclude_no_merit: bool = False) -> pd.DataFrame:
+    """Apply the same filters the live app exposes, then rank by Value Score.
+
+    `exclude_no_merit` drops colleges on the curated need-only list. It defaults
+    off: the curated list covers 26 institutions out of 1,907, so leaving it on by
+    default would imply the other 1,881 had been checked and cleared. Opt-in keeps
+    the filter's meaning honest -- "hide the ones I know award no merit aid".
+    """
     out = df.copy()
 
     # need the essentials to rank at all
@@ -125,6 +145,9 @@ def rank_and_filter(df: pd.DataFrame, max_net_price: float, mgi_at_least_median:
 
     if exclude_flagged:
         out = out[out["RISK_FLAGS"] == ""]
+
+    if exclude_no_merit and "MERIT_POLICY" in out.columns:
+        out = out[out["MERIT_POLICY"] != NEED_ONLY]
 
     out = out.sort_values("VALUE_SCORE", ascending=False).reset_index(drop=True)
     out.insert(0, "RANK", out.index + 1)

@@ -18,6 +18,9 @@ DEFAULTS = {
     "mgi_at_least_median": True,
     "top_n": 20,
     "exclude_flagged": True,
+    # Off by default: the curated need-only list covers 26 of 1,907 colleges, so
+    # filtering on it by default would imply the rest had been checked and cleared.
+    "exclude_no_merit": False,
 }
 
 # The 8 IPEDS files this app expects (exact filenames).

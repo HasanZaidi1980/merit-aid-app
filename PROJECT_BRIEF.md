@@ -59,9 +59,19 @@ docker-compose.yml   runs frontend + backend together locally
 ### Key backend files
 - `app/data.py` — load, clean (IPEDS missing-value sentinels −1/−2/−3/−9 → NaN), filter to 4-year degree-granting, merge the 7 files, build the analysis table.
 - `app/scoring.py` — all derived metrics and the ranking/filtering logic. **Audit here.**
+- `app/merit_policy.py` — the curated need-only roster and the `MERIT_POLICY` column. The one thing IPEDS cannot tell us; see §5.1.
+- `app/education.py` — percentile breakpoints + histograms for the education section, so the browser can re-score a hypothetical college without a request per slider drag.
 - `app/rag.py` — mission-statement embeddings (local `sentence-transformers`, TF-IDF fallback) + retrieval + Claude answer generation.
 - `app/main.py` — the `/api/*` endpoints.
-- `scripts/make_sample_data.py` — generates 8 realistic sample CSVs so the app runs without the real dataset.
+- `scripts/make_sample_data.py` — generates 7 realistic sample CSVs so the app runs without the real dataset.
+
+### Key frontend files
+- `src/education/glossary.js` — the plain-English definitions. Deliberately terse; each term is one line of *what*, one of *how*, one of the mistake people make with it.
+- `src/education/valueScore.js` — the Value Score, re-derived in the browser from the shipped breakpoints. **Mirrors `scoring.add_metrics()` — change them together.**
+- `src/components/Sandbox.jsx` — "Build a College": drag the inputs, watch the ranking move.
+- `src/components/Explain.jsx` / `DistStrip.jsx` — the inline `?` affordance and its distribution strip.
+- `src/components/Compare.jsx` — two colleges, metric by metric.
+- `src/components/MeritNote.jsx` — the §5.1 disclosure, rendered above the charts.
 
 ---
 
@@ -135,11 +145,13 @@ DISCOUNT = COA - NET_PRICE_MID
 ```
 Dollars the sticker price overstates what a middle-income family actually pays. Bigger = better deal. This is what the dumbbell chart draws.
 
-**MGI — Merit Generosity Index**
+**MGI — grant ÷ tuition** *(the original brief called this the "Merit Generosity Index")*
 ```
 MGI = IGRNT_A / TUITION2
 ```
 The original project's metric. Grant relative to **tuition only**. Used by the `mgi_at_least_median` filter, not by Value Score.
+
+> ⚠️ **It does not measure merit.** `IGRNT_A` is *total* institutional grant aid — need-based and merit awards added together — and no IPEDS variable splits them (verified across all 663 columns of `SFA2122`). Both `MGI` and `AID_SHARE` therefore measure **generosity**, not merit. The UI labels this "Grant ÷ Tuition" for exactly that reason. See §5.1.
 
 **Aid Share**
 ```
@@ -199,6 +211,29 @@ Three columns, split by whether the missing field actually affects the result:
 - `DATA_GAPS` — missing fields that affect **display only**: `no_sat`, `no_admit_rate`. These never remove a college from the ranking.
 
 In practice `no_grad_rate` can never appear on a *returned* row, because step 2 drops unscoreable rows before step 5 — so `exclude_flagged` is gated by `incomplete_coa` alone. The flag still counts in `/api/meta`'s `flagged_count`, which is computed over the whole dataset.
+
+### 5.1 Merit aid vs institutional aid — the app's central caveat
+
+**The problem.** `IGRNT_A` is one figure covering *all* grant money an institution awards: need-based and merit combined. All 663 columns of `SFA2122` were searched; no variable splits them, and NCES does not require institutions to report the split. Yet the app is named for merit aid and its headline metric was called the *Merit* Generosity Index.
+
+**Why it matters.** The two kinds of aid work by opposite mechanisms. Need-based aid is awarded on the family's finances; merit aid is awarded on the student's record. A college can be extremely generous and still offer nothing a strong student can *earn*. Measured against the live rankings, **11 of the top 23 colleges award no merit aid at all** — Stanford, Williams, MIT, Princeton, Yale, Columbia, Caltech, Colby, Harvard, Duke, Dartmouth.
+
+**What is and isn't wrong.** The rankings and net prices are correct — for a $75–110k family, Stanford's net price really is about $7,332. The *attribution* was wrong, and that is what broke actionability: a family hunting for scholarships they could win was being pointed at colleges where no such scholarship exists.
+
+**What was done** (2026-10-28):
+
+1. **Relabelled honestly.** Every user-facing "merit" claim on a generosity metric is gone. The sidebar filter reads "Grant ÷ Tuition ≥ median"; `/api/meta` carries `metric_notes` so the correction travels with the data; a disclosure panel sits above the charts. The wire field stays `MGI` for contract compatibility.
+2. **Curated need-only list** — `backend/app/merit_policy.py`, 26 institutions that publicly award no merit scholarships, keyed on UNITID. Adds `MERIT_POLICY` (`need_only` / `unknown`) and the opt-in `exclude_no_merit` filter.
+
+**The invariants** (pinned by `backend/tests/test_merit_policy.py`):
+
+- **`unknown` is not a claim.** It means *unchecked*. The column is a string rather than a bool precisely so there is no value that could be read as "offers merit aid" — 26 of 1,907 have been checked, and a `False` on the other 1,881 would convert a known gap into an invented answer.
+- **The flag touches no score.** It is a fact about the college, not a measurement of it, so it belongs in neither `RISK_FLAGS` nor `DATA_GAPS` and never moves a ranking.
+- **The filter is opt-in.** Defaulting it on would imply the other 1,881 colleges had been checked and cleared.
+
+**Status: provisional.** The list is compiled from well-documented institutional policy, *not* yet verified line-by-line against each institution's current Common Data Set. Verify before treating `need_only` as authoritative.
+
+**The real fix** is CDS **section H2A**, which splits need-based from non-need-based institutional aid per institution. There is no bulk download, so covering all 1,907 is a scraping project — planned as Phase 4 in `PROJECT_STATE.md`.
 
 ---
 
@@ -443,16 +478,19 @@ merit-aid-app/
   HANDOFF.md                current status + how Claude Code and Cowork split the work
   README.md                 how to run
   ANALYSIS.md               what the live reference app is + cloud/hosting findings
-  observed-api-contract.md  exact endpoints + the 24-field schema this app returns
+  observed-api-contract.md  exact endpoints + the 25-field schema this app returns
   DEPLOYMENT.md             GCP deploy steps + teardown
   docker-compose.yml
   backend/
-    app/{config,data,scoring,rag,main}.py
+    app/{config,data,scoring,merit_policy,education,rag,main}.py
     scripts/make_sample_data.py
-    tests/test_scoring.py   scoring + flag-split tests (in-memory fixtures)
+    tests/test_scoring.py       scoring + flag-split tests (in-memory fixtures)
+    tests/test_merit_policy.py  merit-policy flagging + education summaries
     conftest.py  requirements.txt  requirements-dev.txt  Dockerfile
   frontend/
     src/{App.jsx,Plot.jsx,api.js,main.jsx,styles.css}
+    src/education/{glossary,valueScore,format}.js
+    src/components/{Sandbox,Compare,Explain,DistStrip,MeritNote}.jsx
     package.json  vite.config.js  index.html  nginx.conf  Dockerfile
   deploy/
     terraform/{main,variables,outputs}.tf

@@ -43,3 +43,143 @@ tbody tr:hover { background: #f1f5f9; }
 .answer { margin-top: 14px; background: #f8fafc; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; font-size: 13.5px; white-space: pre-wrap; line-height: 1.6; }
 .answer .src { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .loading { color: var(--muted); font-size: 13px; }
+
+/* ---------------------------------------------------------------- *
+ * Education section + merit-aid disclosure
+ * ---------------------------------------------------------------- */
+
+/* Backend unreachable. Replaces a "Loading…" that used to sit there forever. */
+.fatal { max-width: 560px; margin: 80px auto; padding: 24px 28px; background: var(--card);
+  border: 1px solid var(--line); border-left: 4px solid #c2453b; border-radius: 12px; }
+.fatal h2 { margin: 0 0 8px; font-size: 19px; color: var(--navy); }
+.fatal p { color: var(--muted); font-size: 13.5px; line-height: 1.6; margin: 0 0 16px; }
+.fatal code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+
+/* --- the inline "?" explain affordance --- */
+.explain { position: relative; display: inline-block; margin-left: 5px; vertical-align: middle; }
+.explain-btn { width: 15px; height: 15px; padding: 0; line-height: 13px; font-size: 10.5px;
+  font-weight: 700; color: var(--navy); background: #eef2ff; border: 1px solid #dfe4ff;
+  border-radius: 50%; cursor: pointer; font-family: inherit; }
+.explain-btn:hover, .explain-btn[aria-expanded="true"] { background: var(--navy); color: #fff;
+  border-color: var(--navy); }
+.explain-card { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+  display: flex; flex-direction: column; gap: 6px; width: 268px; padding: 12px 14px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .14);
+  /* Table headers are nowrap and right-aligned; the card must inherit neither. */
+  white-space: normal; text-align: left; font-weight: 400; cursor: default; }
+/* Near the right edge of the table, open leftward rather than off-screen. */
+th:nth-last-child(-n+4) .explain-card { left: auto; right: 0; }
+.ec-term { font-size: 13px; color: var(--navy); }
+.ec-what { font-size: 12.5px; color: var(--ink); line-height: 1.5; }
+.ec-how { font-size: 11.5px; color: var(--muted); background: #f1f5f9; padding: 3px 7px;
+  border-radius: 5px; align-self: flex-start; }
+.ec-myth { font-size: 11.5px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a;
+  padding: 6px 8px; border-radius: 6px; line-height: 1.45; }
+.ec-myth b { color: #78350f; }
+.ec-strip { margin-top: 2px; }
+.ec-val { font-size: 11.5px; color: var(--muted); }
+
+/* --- distribution strip (inline SVG) --- */
+.strip-bar { fill: #cbd5e1; }
+.strip-median { stroke: #94a3b8; stroke-width: 1; stroke-dasharray: 2 2; }
+.strip-mark { stroke: var(--green); stroke-width: 2; }
+.strip-dot { fill: var(--green); }
+.strip-cap { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 3px; font-size: 10.5px;
+  color: var(--muted); }
+.strip-cap i { display: inline-block; width: 8px; height: 2px; margin-right: 4px;
+  vertical-align: middle; }
+.strip-cap .sw-median { background: #94a3b8; }
+.strip-cap .sw-mark { background: var(--green); height: 3px; }
+
+/* --- section wrapper --- */
+.learn { margin: 28px 0 0; }
+.learn-head h2 { font-size: 20px; color: var(--navy); margin: 0 0 4px; }
+.learn-head p { color: var(--muted); font-size: 13.5px; margin: 0 0 16px; max-width: 70ch;
+  line-height: 1.6; }
+.header p a { color: var(--green); font-weight: 600; text-decoration: none; }
+.header p a:hover { text-decoration: underline; }
+
+/* --- Build a College --- */
+.presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.presets .chip { border: 1px solid #dfe4ff; font-weight: 600; }
+.presets .chip.on { background: var(--navy); color: #fff; border-color: var(--navy); }
+.sb-grid { display: grid; grid-template-columns: 1fr 260px; gap: 26px; align-items: start; }
+.sb-row { margin-bottom: 13px; }
+.sb-row label { display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; font-size: 12.5px; color: var(--ink); margin-bottom: 4px; }
+.sb-label { display: inline-flex; align-items: center; gap: 2px; }
+.sb-val { color: var(--navy); font-size: 13px; font-variant-numeric: tabular-nums; }
+.sb-row input[type=range] { width: 100%; accent-color: var(--green); }
+/* Marks the metrics the app shows but never scores on - a lesson, not decoration. */
+.badge-off { margin-left: 6px; padding: 1px 6px; font-size: 9.5px; font-style: normal;
+  font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: #92400e;
+  background: #fef3c7; border-radius: 999px; }
+
+.sb-out { background: #f8fafc; border: 1px solid var(--line); border-radius: 12px;
+  padding: 16px; }
+.sb-score { text-align: center; padding-bottom: 12px; margin-bottom: 12px;
+  border-bottom: 1px solid var(--line); }
+.sb-score-n { font-size: 38px; font-weight: 800; color: var(--navy); line-height: 1;
+  font-variant-numeric: tabular-nums; }
+.sb-score-l { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.sb-rank { font-size: 12px; color: var(--ink); margin-top: 6px; }
+.sb-rank b { color: var(--green); }
+.sb-bar { margin-bottom: 10px; }
+.sb-bar-top { display: flex; justify-content: space-between; font-size: 11.5px;
+  color: var(--ink); }
+.sb-bar-top b { font-variant-numeric: tabular-nums; color: var(--navy); }
+.sb-bar-track { height: 6px; background: #e2e8f0; border-radius: 99px; overflow: hidden;
+  margin: 3px 0 2px; }
+.sb-bar-track i { display: block; height: 100%; background: var(--green);
+  transition: width .12s linear; }
+.sb-bar-why { font-size: 10.5px; color: var(--muted); }
+.sb-formula { font-size: 11px; color: var(--muted); text-align: center; margin: 10px 0 0;
+  padding-top: 10px; border-top: 1px solid var(--line); }
+.sb-derived { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line); }
+.sb-derived div { display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; font-size: 12px; padding: 3px 0; }
+.sb-derived dt { color: var(--muted); display: inline-flex; align-items: center; }
+.sb-derived dd { margin: 0; font-weight: 700; color: var(--navy);
+  font-variant-numeric: tabular-nums; }
+.sb-strip { display: flex; align-items: center; gap: 16px; margin-top: 20px;
+  padding-top: 16px; border-top: 1px solid var(--line); }
+.sb-strip-l { font-size: 12px; color: var(--muted); flex: 0 0 180px; }
+/* The strip keeps its 240x40 aspect ratio, so an unbounded flex child just
+   letterboxes it in the middle of the row. Cap the width instead of stretching:
+   a stretched viewBox would thin the median and marker strokes to hairlines. */
+.sb-strip .strip { flex: 1; max-width: 420px; }
+.sb-note { margin: 16px 0 0; padding: 12px 14px; background: #eff6ff;
+  border: 1px solid #bfdbfe; border-radius: 8px; font-size: 12.5px; line-height: 1.6;
+  color: #1e3a5f; }
+.sb-note b { color: var(--navy); }
+
+/* --- head to head --- */
+.cmp-pick { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.cmp-pick select { flex: 1; min-width: 0; padding: 8px 10px; font-size: 13px;
+  font-family: inherit; color: var(--ink); background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px; }
+.cmp-vs { font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--muted); }
+table.cmp { table-layout: fixed; }
+table.cmp th, table.cmp td { border-bottom: 1px solid var(--line); padding: 8px 10px; }
+table.cmp th { text-align: center; width: 34%; cursor: default; font-weight: 600;
+  white-space: normal; }
+table.cmp td.cmp-v { text-align: center; width: 33%; font-size: 13.5px; color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+table.cmp td.cmp-v.win { color: var(--green); font-weight: 800; background: #f0fdf4; }
+.cmp-term { display: inline-flex; align-items: center; font-size: 12.5px; color: var(--navy); }
+.cmp-note { display: block; font-size: 10.5px; font-style: normal; font-weight: 400;
+  color: var(--muted); margin-top: 1px; }
+
+/* --- merit-aid disclosure --- */
+.merit-note { border-left: 4px solid #d97706; background: #fffdf7; }
+.merit-note h3 { color: #92400e; font-size: 14.5px; margin-bottom: 8px; }
+.merit-note .cap { max-width: 92ch; margin-bottom: 7px; }
+.merit-note .mn-foot { padding-top: 8px; border-top: 1px solid #fde68a; margin-bottom: 0; }
+.tag-need { display: inline-block; padding: 1px 7px; font-size: 10.5px; font-weight: 700;
+  color: #92400e; background: #fef3c7; border: 1px solid #fde68a; border-radius: 999px; }
+
+@media (max-width: 1100px) {
+  .sb-grid { grid-template-columns: 1fr; }
+}

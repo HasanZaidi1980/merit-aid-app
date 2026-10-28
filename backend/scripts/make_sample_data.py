@@ -1,5 +1,11 @@
 """Generate small, realistic sample IPEDS files so the app runs without the real
-dataset. Writes the 8 expected CSVs into ../data. Swap in real IPEDS files later.
+dataset. Writes the 7 expected CSVs into ../data. Swap in real IPEDS files later.
+
+Note: UNITIDs here are synthetic (100000+), so they match nothing on the curated
+need-only roster in app/merit_policy.py and every row comes out MERIT_POLICY=unknown.
+The "Merit aid" column is therefore all dashes in demo mode. That is deliberate --
+attaching a real institution's published aid policy to a fake college would be worse
+than leaving the feature dark until real data is installed.
 """
 import os
 import numpy as np

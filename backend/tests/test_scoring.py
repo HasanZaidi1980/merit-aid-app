@@ -181,10 +181,22 @@ def test_net_price_includes_public_institutions():
     assert list(net_price(sfa[["UNITID", "NPT442"]])) [:1] == [18000.0]
 
 
-def test_api_row_schema_exposes_data_gaps():
-    """The contract is 24 fields now; DATA_GAPS is additive, nothing was removed."""
+def test_api_row_schema_is_additive_only():
+    """25 fields now. DATA_GAPS and MERIT_POLICY were added; nothing was removed.
+
+    The observed contract is 23 fields. Anything a consumer of the original schema
+    reads must still be there, so this asserts the original list as a subset rather
+    than just counting.
+    """
     from app.main import ROW_FIELDS
 
-    assert len(ROW_FIELDS) == 24
-    assert "DATA_GAPS" in ROW_FIELDS
-    assert "RISK_FLAGS" in ROW_FIELDS
+    observed_23 = {
+        "RANK", "UNITID", "INSTNM", "STABBR", "CONTROL_LABEL", "COA", "COA_COMPLETE",
+        "TUITION2", "IGRNT_A", "NET_PRICE_MID", "DISCOUNT", "ADMISSIONS_RATE",
+        "GRAD_RATE", "SATVR75", "SATMT75", "SAT_TOTAL_75", "AID_SHARE", "VALUE_SCORE",
+        "COMPONENTS_USED", "RISK_FLAGS", "MGI", "NET_PRICE_RATIO", "COMPOSITE_LEGACY",
+    }
+    assert observed_23 <= set(ROW_FIELDS)
+    assert len(ROW_FIELDS) == 25
+    assert set(ROW_FIELDS) - observed_23 == {"DATA_GAPS", "MERIT_POLICY"}
+    assert len(ROW_FIELDS) == len(set(ROW_FIELDS))

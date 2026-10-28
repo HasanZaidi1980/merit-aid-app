@@ -1,6 +1,6 @@
 # Project State — Merit Aid Finder
 
-**Last updated:** 2026-10-28 · **Branch:** `main` @ `31971cf` · **Remote:** github.com/HasanZaidi1980/merit-aid-app
+**Last updated:** 2026-10-28 · **Branch:** `main` @ `55bfaf1` · **Remote:** github.com/HasanZaidi1980/merit-aid-app
 
 This is the single source of truth for *where the project stands* and *what remains*.
 It deliberately does not restate architecture, formulas, or environment traps — it
@@ -12,7 +12,7 @@ owning doc when a fact changes.
 | **PROJECT_STATE.md** | ← this file. Status + the road to completion. |
 | `HANDOFF.md` | Who works on this (Claude Code / Cowork split), guardrails, applied fixes. |
 | `PROJECT_BRIEF.md` | Architecture, data pipeline, how to run, **the formulas** (§5-§6), **environment gotchas** (§9), task ideas. |
-| `observed-api-contract.md` | The API contract and 24-field row schema. |
+| `observed-api-contract.md` | The API contract and 25-field row schema. |
 | `ANALYSIS.md` | What the reference app is and what was observable from outside. |
 | `DEPLOYMENT.md` | GCP deploy steps and teardown. |
 
@@ -24,19 +24,22 @@ owning doc when a fact changes.
 |---|---|---|
 | Version control | ✅ Done | `main` pushed to GitHub. 5 commits. |
 | Runs locally | ✅ Done | Docker (`docker compose up --build`) and direct (uvicorn + vite). |
-| Backend API | ✅ Working | All 5 endpoints verified; 24-field rows. |
-| Frontend | ✅ Working | 5 charts, sortable table, CSV export, RAG panel. |
-| RAG / AI | ❌ **Non-functional** | No real mission source exists (see Phase 4). Index holds sample UNITIDs; every query now returns nothing. |
+| Backend API | ✅ Working | All 7 endpoints verified; 25-field rows. |
+| Frontend | ✅ Working | 5 charts, sortable table, CSV export, RAG panel, education section. |
+| RAG / AI | ❌ **Non-functional** | No real mission source exists (see Phase 5). Index holds sample UNITIDs; every query now returns nothing. |
 | Scoring logic | ⚠️ Validated on real data | 6 issues resolved + tested; **4 still open** (see `PROJECT_BRIEF.md` §6). COA is the one remaining unexplained gap. |
-| Tests | ⚠️ Partial | 9 tests over scoring, flags and net-price coalescing. No endpoint tests. |
+| Merit vs need-based aid | ⚠️ Mitigated, not solved | `IGRNT_A` conflates them and IPEDS never splits them. Relabelled honestly + 26-college curated need-only list. Real fix is Phase 4. |
+| Tests | ⚠️ Partial | 17 tests over scoring, flags, net-price coalescing and merit policy. No endpoint tests. |
 | **Real data** | ✅ **Installed & validated** | Real IPEDS 2022-23: 1,907 colleges (726 public / 1,095 private nonprofit / 86 for-profit). 5 of 5 reference metrics match. |
-| Error handling | ❌ Missing | Backend failure = permanent "Loading…" spinner. |
+| Error handling | ⚠️ Partial | `/api/meta` failure now shows a real error with a retry. `getColleges` and the empty state are still silent. |
 | Deployment | ❌ Not started | Terraform + K8s manifests exist, never applied. |
 
 **One-line summary:** the app runs on real, validated IPEDS data and produces defensible
 rankings — Stanford #1 at $77,662 sticker against a $7,332 net price for a mid-income
-family, which is exactly the thesis. What remains is the COA question, a UI that fails
-silently when the backend does, and a RAG panel with no real data source.
+family, which is exactly the thesis. The numbers are right; the word "merit" on them was
+not, and is now corrected in the UI rather than in the data (Phase 4). What remains is
+the COA question, a UI that still fails silently on `getColleges`, and a RAG panel with
+no real data source.
 
 ---
 
@@ -93,6 +96,21 @@ Settled. Don't relitigate without a reason.
 - **The MGI median is dataset-wide**, not recomputed after filtering.
 - **The API may exceed the reference app's 23 fields.** Additions are backward
   compatible; nothing is renamed or removed.
+- **Nothing user-facing calls a generosity metric "merit".** `IGRNT_A` conflates
+  need-based and merit aid and IPEDS publishes no split, so the claim was simply
+  false. The wire field stays `MGI` for contract compatibility; every label reads
+  "Grant ÷ Tuition" (`PROJECT_BRIEF` §5.1).
+- **`MERIT_POLICY` of `unknown` means *unchecked*, never "awards merit aid".** 26 of
+  1,907 colleges have been checked. The column is a string, not a bool, so there is
+  no value that could be misread as a positive finding.
+- **`exclude_no_merit` is opt-in.** Defaulting it on would imply the other 1,881
+  colleges had been checked and cleared.
+- **The merit-policy flag affects no score.** It is a fact about the college, not a
+  measurement of it, so it sits in neither flag column and never moves a ranking.
+- **The education section scores in the browser.** `/api/education/distributions`
+  ships 101 percentile breakpoints once (~8 KB); the sandbox re-derives Value Score
+  locally rather than issuing a request per slider drag. `frontend/src/education/
+  valueScore.js` mirrors `scoring.add_metrics()` and must change with it.
 
 ---
 
@@ -156,12 +174,66 @@ Only answerable on real data. `PROJECT_BRIEF.md` §6 Still open is the checklist
 **Done when:** `PROJECT_BRIEF.md` §6 Still open is empty or every remaining item is a conscious
 accepted trade-off.
 
-### Phase 4 — Harden the app for a real user
+### Phase 4 — Split merit aid from need-based aid (Common Data Set) ⏸ *deferred by decision, 2026-10-28*
+
+**This is the app's central unfinished business.** It is deferred, not dropped.
+
+**The problem.** `IGRNT_A` is total institutional grant aid — need-based and merit
+combined. All 663 columns of `SFA2122` were searched and nothing splits them; NCES
+does not require institutions to report the split. So an app named "Merit Aid Finder"
+has no merit-aid data in it. Measured against the live rankings, **11 of the top 23
+colleges award no merit aid at all.**
+
+**What already shipped** (2026-10-28) — the two cheap mitigations, done:
+
+- ✅ **Relabelled honestly.** The sidebar reads "Grant ÷ Tuition ≥ median", `/api/meta`
+      carries `metric_notes`, and a disclosure panel sits above the charts. Full write-up
+      in `PROJECT_BRIEF.md` §5.1.
+- ✅ **Curated need-only list** — `backend/app/merit_policy.py`, 26 institutions, keyed
+      on UNITID. Adds `MERIT_POLICY` and the opt-in `exclude_no_merit` filter.
+      Covered by `backend/tests/test_merit_policy.py`.
+
+**What remains — the real fix.** The authoritative source is the **Common Data Set,
+section H2A**, which reports need-based and non-need-based institutional aid separately
+for each institution. It is published per-institution as a PDF or spreadsheet on each
+college's institutional-research page. There is no bulk download, which is the entire
+reason this is a project rather than a column rename.
+
+- [ ] **Verify the existing 26 first.** The curated list is marked `provisional`:
+      compiled from well-documented institutional policy, not yet checked line-by-line
+      against each school's current CDS. Checking 26 is a morning's work and it either
+      validates the shipped list or finds the error before anyone relies on it. **Do this
+      before any scraping** — it also calibrates how reliably H2A can be read.
+- [ ] **Scope the crawl.** 1,907 institutions, no common URL pattern, mixed PDF/XLSX/HTML.
+      Expect partial coverage; design for it from the start rather than discovering it at
+      70%. Decide the acceptable floor up front (the top 200 by Value Score would fix the
+      part of the ranking users actually read).
+- [ ] **Model the result honestly.** Extend `MERIT_POLICY` with a third value for
+      *confirmed to award merit aid* — the vocabulary is a string precisely so this can
+      be added without a schema change. `unknown` must keep meaning **unchecked**.
+- [ ] **Then, and only then, a real merit metric.** With non-need-based dollars split
+      out, `MGI` can finally mean what its name claimed. Until the split exists, do not
+      compute a "merit" number from `IGRNT_A` under any weighting — there is no
+      arithmetic that recovers it.
+- [ ] Record provenance per institution (source URL, CDS year, who checked it). A hand-
+      maintained list without provenance rots silently.
+
+**Done when:** `MERIT_POLICY` is sourced from CDS H2A rather than curation for a stated,
+measured share of the dataset — and the UI reports that share instead of implying
+completeness.
+
+**Why deferred:** the two mitigations above remove the misleading claim, which was the
+actual harm. The remaining work buys a *feature* (find colleges that award merit aid),
+not a *correction*, and it is large enough to compete with deployment for time.
+
+### Phase 5 — Harden the app for a real user
 
 Do this before deploying. The failure it prevents is the failure most likely to occur.
 
-- [ ] **Add error states.** `getMeta()` needs a `.catch()`; show a real error with a
-      retry instead of an endless spinner. Same for `getColleges`.
+- [x] ~~**Add error states.** `getMeta()` needs a `.catch()`~~ — done 2026-10-28: a
+      failed `/api/meta` now renders a `.fatal` panel naming the error with a Retry
+      button, instead of an endless spinner.
+- [ ] Same for `getColleges` — it still swallows its error and shows an empty table.
 - [ ] **Empty state** when filters return zero rows.
 - [ ] **Decide what happens to the RAG feature.** It has no real data source:
       `IC2022Mission.csv` does not exist — IPEDS stopped publishing mission statements
@@ -188,7 +260,7 @@ Do this before deploying. The failure it prevents is the failure most likely to 
 
 **Done when:** killing the backend produces a visible, recoverable error in the UI.
 
-### Phase 5 — Extend test coverage
+### Phase 6 — Extend test coverage
 
 - [ ] `data.py`: load, merge, clean, sentinel handling, empty-result handling.
 - [ ] Endpoint tests via `TestClient`, including malformed query params.
@@ -198,11 +270,11 @@ Do this before deploying. The failure it prevents is the failure most likely to 
 
 **Done when:** `pytest` covers every module and runs in CI.
 
-### Phase 6 — Upgrade to IPEDS 2023-24 🔒 *blocked by Phase 2*
+### Phase 7 — Upgrade to IPEDS 2023-24 🔒 *blocked by Phase 2*
 
 Full plan in §6 below.
 
-### Phase 7 — Deploy to GCP
+### Phase 8 — Deploy to GCP
 
 Fix the manifests first — they contain the probable cause of the reference app's 502s.
 
@@ -220,7 +292,7 @@ Fix the manifests first — they contain the probable cause of the reference app
 
 **Done when:** the external IP serves the app and `/api/*` survives a pod restart.
 
-### Phase 8 — Finish
+### Phase 9 — Finish
 
 - [ ] README reflects the deployed URL and the real data year.
 - [ ] `PROJECT_STATE.md` (this file) marked complete.
@@ -316,9 +388,10 @@ Reverting is: restore those files and revert the filename commit.
 |---|---|---|
 | Real IPEDS column names differ from the hardcoded ones | Backend won't start | Phase 1 verification step; report, don't silently rename |
 | `COA` understates the real cost basket | Biases `DISCOUNT` and `AID_SHARE` on every row | Phase 3, item 1 — highest-priority open question |
-| GKE Ingress health-checks `/` | 502s on `/api/*` with the site up | Phase 7 — fix manifests before first deploy |
-| Backend failure is invisible to users | Permanent spinner, no recovery | Phase 4 — add error states |
-| GCP left running after the demo | Continuous billing | Phase 8 teardown; `DEPLOYMENT.md` has the commands |
+| GKE Ingress health-checks `/` | 502s on `/api/*` with the site up | Phase 8 — fix manifests before first deploy |
+| `getColleges` failure is invisible to users | Empty table, no explanation | Phase 5 — the `/api/meta` path is fixed, this one is not |
+| Curated need-only list is unverified | A college wrongly labelled "need-based only" | Phase 4 — verify all 26 against CDS H2A before relying on it |
+| GCP left running after the demo | Continuous billing | Phase 9 teardown; `DEPLOYMENT.md` has the commands |
 | Two agents editing one file | Lost work | `HANDOFF.md` — announce files before editing |
 
 ---
@@ -327,6 +400,10 @@ Reverting is: restore those files and revert the filename commit.
 
 | Commit | What |
 |---|---|
+| *(pending)* | Merit-aid correction (relabel + need-only flag) and the education section |
+| `55bfaf1` | Record real-data validation: phases 1-2 complete |
+| `54a0611` | Read one SFA file and include public universities in net price |
+| `41ccb48` | Fold FORMULAS.md and GOTCHAS.md into PROJECT_BRIEF.md |
 | `31971cf` | PROJECT_BRIEF + README updated for the test suite and 24-field schema |
 | `3723705` | Frontend wired to `median_mgi` and `DATA_GAPS` |
 | `b8e58d0` | First test suite — 8 tests over scoring and the flag split |
