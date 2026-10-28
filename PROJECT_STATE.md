@@ -1,6 +1,6 @@
 # Project State — Merit Aid Finder
 
-**Last updated:** 2026-10-28 · **Branch:** `main` @ `55bfaf1` · **Remote:** github.com/HasanZaidi1980/merit-aid-app
+**Last updated:** 2026-10-28 · **Branch:** `main` @ `2d008fb` · **Remote:** github.com/HasanZaidi1980/merit-aid-app
 
 This is the single source of truth for *where the project stands* and *what remains*.
 It deliberately does not restate architecture, formulas, or environment traps — it
@@ -400,7 +400,7 @@ Reverting is: restore those files and revert the filename commit.
 
 | Commit | What |
 |---|---|
-| *(pending)* | Merit-aid correction (relabel + need-only flag) and the education section |
+| `2d008fb` | Merit-aid correction (relabel + need-only flag) and the education section |
 | `55bfaf1` | Record real-data validation: phases 1-2 complete |
 | `54a0611` | Read one SFA file and include public universities in net price |
 | `41ccb48` | Fold FORMULAS.md and GOTCHAS.md into PROJECT_BRIEF.md |
