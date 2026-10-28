@@ -1,0 +1,7 @@
+# Test-only dependencies. Deliberately separate from requirements.txt so the
+# production image doesn't pull them: backend/Dockerfile installs only the latter.
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pytest
+-r requirements.txt
+pytest==8.3.3
+httpx==0.27.2          # needed by fastapi.testclient
