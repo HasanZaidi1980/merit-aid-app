@@ -209,6 +209,12 @@ export default function App() {
               inaccuracy — the label now says what the ratio is. */}
           Grant ÷ Tuition ≥ median{meta.median_mgi != null ? ` (${meta.median_mgi.toFixed(2)})` : ''}
         </label>
+        <p className="hint">
+          The average grant measured against tuition. Keeps only colleges more generous
+          than the typical 4-year college. The bar is taken across all{' '}
+          {meta.colleges_in_dataset.toLocaleString()} colleges, so it holds still when
+          you move the other filters.
+        </p>
         <label className="toggle">
           <input type="checkbox" checked={filters.excludeFlagged}
             onChange={() => setFilters({ ...filters, excludeFlagged: !filters.excludeFlagged })} />
