@@ -2,11 +2,33 @@
 
 For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next for full architecture, metrics, and task ideas; this doc is just *where things stand right now*. See "Who works on this" below for how the two agents split the work.
 
-## Status: runs locally, not deployed
+## Status: real data, runs locally, not deployed
 
-- **Works locally via Docker.** `docker compose up --build` builds both images and serves the app at http://localhost:8080. Backend confirmed starting cleanly (`Uvicorn running on 0.0.0.0:8000`, "Application startup complete").
-- **Not deployed to GCP.** Nothing pushed to GKE/Cloud/Artifact Registry. Deployment steps exist in `DEPLOYMENT.md` but have not been run.
-- **Not in git / not on GitHub.** The project lives only as local files on the user's machine (`C:\Users\amatu\Downloads\merit-aid-app`) plus the zip from this chat. No repo initialized yet.
+*Last updated 2026-10-28 @ `ec37a8a`.*
+
+- **On real IPEDS 2022-23 data.** 1,907 colleges. Validated against the reference
+  app's published numbers — 4 of 5 match exactly; the fifth is explained (see below).
+- **In git and on GitHub.** `main` @ `ec37a8a`, pushed to
+  github.com/HasanZaidi1980/merit-aid-app.
+- **Works locally.** Docker (`docker compose up --build` → http://localhost:8080) and
+  direct (uvicorn :8000 + vite :5173).
+- **17 tests pass.** `cd backend && pytest` — in-memory fixtures, no data files needed.
+- **Not deployed to GCP.** Nothing pushed to GKE/Artifact Registry. `DEPLOYMENT.md` has
+  the steps; they have not been run. The manifests contain a known bug — see
+  `PROJECT_STATE.md` Phase 8.
+
+## New to this project? Start here
+
+1. `git clone https://github.com/HasanZaidi1980/merit-aid-app.git`
+2. **Get data.** `backend/data/` is gitignored, so a clone has none. Either copy that
+   folder from someone who has it, or `python backend/scripts/make_sample_data.py`.
+3. **Run it.** `docker compose up --build` → http://localhost:8080. No Docker? See
+   `README.md` Option B (uvicorn + vite).
+4. **Read, in this order:** `PROJECT_STATE.md` (where things stand, what's next) →
+   `PROJECT_BRIEF.md` (architecture, formulas, gotchas).
+5. **Before changing any formula**, read `PROJECT_BRIEF.md` §5 and §6. Several
+   non-obvious decisions there are deliberate and tested; §4 of `PROJECT_STATE.md`
+   lists the ones that are settled.
 
 ## Who works on this: Claude Code + Claude Cowork
 
@@ -38,18 +60,28 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
 
 ## What's verified vs unverified
 
-- **Verified:** backend API (meta, colleges, RAG endpoints), frontend build, Docker stack boot, sample-data generation.
+- **Verified:** all 7 API endpoints, frontend build, Docker boot, and the pipeline against
+  the reference app's own numbers — `colleges_in_dataset` 1,907, `net_price_min` 2,200,
+  `net_price_max` 63,997 and `sat_coverage` 985 all reproduce **exactly**.
 - **Unverified — audit these:**
-  - **Scoring formulas** (`backend/app/scoring.py`) are reconstructed from on-screen descriptions, not confirmed against the original. The Value Score / percentile logic is the top priority to validate.
-  - **COA construction** vs net price (apples-to-apples for Discount / Aid Share).
-  - **Percentage-scaling heuristic** for admit/grad rates against the real IPEDS files.
+  - **COA construction** vs net price. The one unexplained gap: `median_aid_share` is
+    0.343 against the reference's 0.3184. A larger denominator closes it, which points at
+    COA. `PROJECT_STATE.md` Phase 3 has the fix.
+  - **Percentage-scaling heuristic** for admit/grad rates (`max > 1.5` is fragile).
+  - **Equal 1/3 weighting** in Value Score is an assertion, not a finding.
+  - **The curated need-only list** (26 colleges) is provisional — compiled from published
+    institutional policy, not yet checked against each school's Common Data Set.
   - Reference app showed intermittent **502s** on `/api/*` — reproduce under load.
-- **No automated tests exist yet.**
+- **17 tests** cover scoring, the flag split, net-price coalescing and merit policy.
+  No endpoint tests yet.
 
 ## Data
 
-- Currently running on **generated sample data** (`backend/scripts/make_sample_data.py` → `backend/data/`).
-- Real IPEDS files drop into `backend/data/` with the same 8 names (see PROJECT_BRIEF §4). Not yet swapped in.
+- **Real IPEDS 2022-23 is installed** in `backend/data/` — 7 files, ~21 MB.
+- `backend/data/` is **gitignored**, so a fresh clone has no data. Either copy the folder
+  across or run `python backend/scripts/make_sample_data.py` for a 300-college demo.
+- Demo mode caveat: sample UNITIDs are synthetic, so the "Merit aid" column is all
+  dashes. That is deliberate — see the note in the generator.
 
 ## Fixes already applied this session (so they're not re-flagged)
 
@@ -62,10 +94,14 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
 **See `PROJECT_STATE.md`** — it owns the roadmap, phase by phase, with a "done when"
 for each. Don't keep a second list here; it drifts.
 
-Where things stand right now: git is done, the first test suite is in, and the real
-IPEDS 2022-23 download is in progress. The gate on everything else is Phase 2 —
-validating the pipeline against the reference app's published numbers before any
-further change, including the data-year upgrade.
+Phases 1-2 are **complete**: real data loaded and validated. Phase 3 (the COA
+question) is unblocked and is the highest-value next change. Phase 4 — splitting
+merit aid from need-based aid via the Common Data Set — is **deferred by decision**,
+not dropped.
+
+Recent work: the app no longer calls any generosity metric "merit" (IPEDS conflates
+need-based and merit grants and publishes no split), an education section was added,
+and the trade-offs chart was rebuilt so its lines can be told apart.
 
 ## Guardrails
 
@@ -82,10 +118,12 @@ merit-aid-app/
   PROJECT_BRIEF.md        full architecture, metrics, task list
   README.md               how to run
   ANALYSIS.md             what the reference app is + cloud/hosting findings
-  observed-api-contract.md  exact endpoints + 23-field schema
+  observed-api-contract.md  exact endpoints + 25-field schema
   DEPLOYMENT.md           GCP deploy + teardown
   docker-compose.yml
-  backend/   app/{config,data,scoring,rag,main}.py  scripts/  requirements.txt  Dockerfile
-  frontend/  src/{App.jsx,Plot.jsx,api.js,main.jsx,styles.css}  nginx.conf  Dockerfile
+  backend/   app/{config,data,scoring,merit_policy,education,rag,main}.py
+             scripts/  tests/  requirements.txt  Dockerfile
+  frontend/  src/{App.jsx,Plot.jsx,api.js,main.jsx,styles.css}
+             src/education/  src/components/  nginx.conf  Dockerfile
   deploy/    terraform/*.tf   k8s/*.yaml
 ```
