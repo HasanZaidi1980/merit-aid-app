@@ -5,6 +5,7 @@ import { COLUMN_TERMS } from './education/glossary.js';
 import { fmt$, num, pct } from './education/format.js';
 import Explain from './components/Explain.jsx';
 import Sandbox from './components/Sandbox.jsx';
+import TradeOffs from './components/TradeOffs.jsx';
 import Compare from './components/Compare.jsx';
 import MeritNote from './components/MeritNote.jsx';
 
@@ -50,7 +51,6 @@ export default function App() {
       .catch(() => setLoading(false));
   }, [filters]);
 
-  const on = (k) => dims[k];
   const sorted = useMemo(() => {
     const s = [...rows].sort((a, b) => {
       const x = a[sort.key], y = b[sort.key];
@@ -103,26 +103,17 @@ export default function App() {
     return data;
   };
 
-  const parcoords = () => {
-    const d = [];
-    if (on('sticker')) d.push({ label: 'Sticker', values: rows.map(r => r.COA) });
-    if (on('grant')) d.push({ label: 'Avg grant', values: rows.map(r => r.IGRNT_A) });
-    if (on('admit_rate')) d.push({ label: 'Admit rate', values: rows.map(r => r.ADMISSIONS_RATE ?? 0) });
-    if (on('grad_rate')) d.push({ label: 'Grad rate', values: rows.map(r => r.GRAD_RATE ?? 0) });
-    if (on('net_price')) d.push({ label: 'Net price', values: rows.map(r => r.NET_PRICE_MID) });
-    return [{ type: 'parcoords', dimensions: d,
-      line: { color: rows.map(r => r.VALUE_SCORE), colorscale: 'Viridis' } }];
-  };
-
   const scatterGenVal = () => [{
     x: rows.map(r => r.AID_SHARE), y: rows.map(r => r.VALUE_SCORE), mode: 'markers',
     marker: { size: 11, color: rows.map(r => r.VALUE_SCORE), colorscale: 'Viridis', showscale: false },
     text: labels, hovertemplate: '%{text}<br>Aid share %{x:.0%}<br>Value %{y:.0f}<extra></extra>',
   }];
 
+  // Full-width card, so names get 34 chars rather than the 22 the cramped charts use.
+  const barLabel = (n) => (n && n.length > 34 ? n.slice(0, 32) + '…' : n);
   const valueBar = () => [{
     type: 'bar', orientation: 'h', x: sorted.map(r => r.VALUE_SCORE).reverse(),
-    y: sorted.map(r => short(r.INSTNM)).reverse(),
+    y: sorted.map(r => barLabel(r.INSTNM)).reverse(),
     marker: { color: GREEN }, hovertemplate: '%{y}<br>Value %{x:.0f}<extra></extra>',
   }];
 
@@ -258,25 +249,29 @@ export default function App() {
         {loading ? <div className="loading">Crunching the rankings…</div> : (
         <>
           <div className="grid">
+            {/* Full width: five axes plus a 20-row legend do not fit a half-width
+                card without squeezing the plot to the point the lines re-merge. */}
+            <div className="card full">
+              <h3>Trade-offs at a Glance</h3>
+              <p className="cap">Each college is one line across price, aid and quality axes. Hover a name to pick its line out; click to keep it. Toggle axes in the sidebar.</p>
+              <TradeOffs rows={rows} dims={dims} />
+            </div>
             <div className="card">
               <h3>The Discount Gap</h3>
               <p className="cap">Each line runs from full sticker (red) to what mid-income families actually pay (green). #1 on top.</p>
               <Plot data={dumbbell()} layout={{ yaxis: { autorange: 'reversed', showticklabels: false }, xaxis: { tickformat: '$,.0s' }, showlegend: true, legend: { orientation: 'h', y: 1.1 } }} />
             </div>
             <div className="card">
-              <h3>Trade-offs at a Glance</h3>
-              <p className="cap">Each college is one line across price, aid and quality axes, colored by Value Score. Toggle dimensions in the sidebar.</p>
-              <Plot data={parcoords()} layout={{ margin: { t: 30, r: 30, b: 20, l: 30 } }} />
-            </div>
-            <div className="card">
               <h3>Generosity vs Overall Value</h3>
               <p className="cap">Aid share = institutional grants ÷ total sticker. Top-right = generous AND strong all-around.</p>
               <Plot data={scatterGenVal()} layout={{ xaxis: { tickformat: '.0%', title: 'Aid share' }, yaxis: { title: 'Value Score' } }} />
             </div>
-            <div className="card">
+            {/* Also full width — at half width the college names truncate to
+                "/ashington and Lee U…", and it keeps the grid free of a gap cell. */}
+            <div className="card full">
               <h3>Value Ranking</h3>
               <p className="cap">Value Score 0–100: the mean of three percentile ranks — affordability, graduation rate, aid generosity.</p>
-              <Plot data={valueBar()} layout={{ margin: { l: 130, t: 10, r: 10, b: 30 } }} />
+              <Plot data={valueBar()} layout={{ margin: { l: 190, t: 10, r: 10, b: 30 } }} />
             </div>
           </div>
 

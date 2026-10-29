@@ -69,6 +69,7 @@ docker-compose.yml   runs frontend + backend together locally
 - `src/education/glossary.js` — the plain-English definitions. Deliberately terse; each term is one line of *what*, one of *how*, one of the mistake people make with it.
 - `src/education/valueScore.js` — the Value Score, re-derived in the browser from the shipped breakpoints. **Mirrors `scoring.add_metrics()` — change them together.**
 - `src/components/Sandbox.jsx` — "Build a College": drag the inputs, watch the ranking move.
+- `src/components/TradeOffs.jsx` — the parallel-coordinates chart, hand-built from scatter traces because Plotly's `parcoords` exposes no line width, no per-series colour and no legend. **Only three hues clear the all-pairs colour gates**, so the top three are coloured and identity for everything else comes from the legend's hover-to-isolate.
 - `src/components/Explain.jsx` / `DistStrip.jsx` — the inline `?` affordance and its distribution strip.
 - `src/components/Compare.jsx` — two colleges, metric by metric.
 - `src/components/MeritNote.jsx` — the §5.1 disclosure, rendered above the charts.
@@ -490,7 +491,7 @@ merit-aid-app/
   frontend/
     src/{App.jsx,Plot.jsx,api.js,main.jsx,styles.css}
     src/education/{glossary,valueScore,format}.js
-    src/components/{Sandbox,Compare,Explain,DistStrip,MeritNote}.jsx
+    src/components/{Sandbox,Compare,Explain,DistStrip,MeritNote,TradeOffs}.jsx
     package.json  vite.config.js  index.html  nginx.conf  Dockerfile
   deploy/
     terraform/{main,variables,outputs}.tf
