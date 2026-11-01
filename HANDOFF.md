@@ -20,8 +20,10 @@ For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next f
 ## New to this project? Start here
 
 1. `git clone https://github.com/HasanZaidi1980/merit-aid-app.git`
-2. **Get data.** `backend/data/` is gitignored, so a clone has none. Either copy that
-   folder from someone who has it, or `python backend/scripts/make_sample_data.py`.
+2. **Get data.** `backend/data/` is gitignored, so a clone has none. Ask whoever set
+   the project up for `merit-aid-data.zip` (that folder, zipped, ~3.8 MB) and unzip it
+   into `backend/`. No one to ask? `python backend/scripts/make_sample_data.py` gives
+   you a 300-college demo instead.
 3. **Run it.** `docker compose up --build` → http://localhost:8080. No Docker? See
    `README.md` Option B (uvicorn + vite).
 4. **Read, in this order:** `PROJECT_STATE.md` (where things stand, what's next) →

@@ -14,3 +14,7 @@ backend/data/
 backend/index/
 index/
 .env
+# ...and any archive of that data. backend/data/ is ignored, but a zip of it
+# sitting anywhere else is not, and that zip is how the dataset gets handed to a
+# new teammate (HANDOFF.md step 2) -- so it is routinely in the working tree.
+*.zip
