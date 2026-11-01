@@ -16,7 +16,11 @@ body { margin: 0; font-family: Inter, system-ui, sans-serif; background: var(--b
 .field input[type=range] { width: 100%; accent-color: var(--green-soft); }
 .field .val { font-weight: 700; color: #fff; }
 .hint { font-size: 11.5px; color: #9aa3d0; line-height: 1.5; margin: 6px 0 0; }
-.main { padding: 28px 32px; }
+/* min-width:0 is load-bearing: a grid track is min-width:auto by default, so the
+   widest child (the comparison table) pushed this track past the viewport and the
+   page scrolled sideways -- clipping the 4th stat tile and the trade-offs legend
+   at any width under ~1700px. */
+.main { padding: 28px 32px; min-width: 0; }
 .header h1 { font-size: 26px; margin: 0 0 4px; color: var(--navy); }
 .header p { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
