@@ -36,7 +36,7 @@ npm run dev                                 # http://localhost:5173 (proxies /ap
 ```bash
 cd backend
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                                      # 17 tests, no data files required
+pytest                                      # 29 tests, no data files required
 ```
 Fixtures are built in memory, not read from `backend/data/` — the sample data has no
 missing values, so it exercises none of the data-quality logic.

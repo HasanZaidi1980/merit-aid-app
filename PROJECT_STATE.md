@@ -143,7 +143,7 @@ data year until it passes (see §6).
 | `net_price_min` | 2200 | 2200 | ✅ |
 | `net_price_max` | 63997 | 63997 | ✅ |
 | `sat_coverage` | 985 | 985 | ✅ |
-| `median_aid_share` | 0.3184 | 0.343 | ⚠️ explained — COA, Phase 3 |
+| `median_aid_share` | ~~0.3184~~ | 0.2942 | ⛔ **retired as a target** — see below |
 | `flagged_count` | 1352 | 379 | ✅ expected — `RISK_FLAGS` redefined |
 
 Also confirmed: rates arrive as 0–100 and the ÷100 heuristic fires (values land
@@ -153,26 +153,45 @@ cleaning step is inert for this dataset; `pytest` 9 passed.
 Other real-data figures: `median_mgi` 0.5798, `data_gap_count` 922,
 `unscoreable_count` 180.
 
-**Done:** four of five metrics match exactly. The fifth has a written explanation and
-a known fix (Phase 3, item 1).
+**Done:** the four structural metrics match exactly and still do after Phase 3.
 
-### Phase 3 — Close the open scoring questions 🔒 *blocked by Phase 2*
+**`median_aid_share` is no longer a validation target** *(2026-11-10)*. 0.3184 was
+computed on the reference app's own cost-of-attendance choice, which Phase 3 showed was
+understated — it put 459 of 1,907 colleges at a negative discount, meaning their net
+price exceeded their entire cost of attendance. A number derived from a demonstrably
+wrong denominator is a fingerprint of that app's decisions, not ground truth, and
+optimising toward it would mean reproducing the defect. The four metrics that remain
+are structural (universe size, net-price extremes, SAT coverage) and depend on no COA
+choice. Our figure is now 0.2942.
 
-Only answerable on real data. `PROJECT_BRIEF.md` §6 Still open is the checklist.
+### Phase 3 — Close the open scoring questions ✅ *complete 2026-11-10*
 
-- [ ] **COA vs net price comparability** — now the only unexplained gap. Switch to
-      `DRVIC2022` ("Total cost of attendance"), almost certainly what the reference used;
-      it should close the `median_aid_share` gap and retire the 174 `incomplete_coa`
-      colleges. **Check the variant first:** `NPIS442` is *in-state* public net price, so
-      the COA column must be in-state too, or publics get an out-of-state sticker measured
-      against an in-state net price and their Discount inflates.
-- [ ] **Replace the percent-scaling heuristic** with an explicit per-column declaration.
-- [ ] **Test the equal weighting.** Report the Value Score distribution, each
-      component's correlation with final rank, and sensitivity to reweighting.
-- [ ] **Make weights configurable** and report them in `/api/meta`.
+All four items closed. Formulas, measurements and accepted trade-offs are recorded in
+**`FORMULAS.md`**, which this phase created (it was referenced by `CLAUDE.md` but had
+never existed).
 
-**Done when:** `PROJECT_BRIEF.md` §6 Still open is empty or every remaining item is a conscious
-accepted trade-off.
+- [x] **COA vs net price comparability** — resolved, but **not** via `DRVIC2022`.
+      IPEDS defines net price as *cost of attendance − average grant aid* for one
+      cohort, and publishes that grant (`GIS4A42` public / `GRN4A42` private) for the
+      same $75k–$110k band and the same 2021-22 year. Adding it back recovers the exact
+      basket net price was computed against, so `COA = NET_PRICE_MID + BAND_GRANT`.
+      Cross-checked against an independent reconstruction from the 2021-22 charge
+      columns weighted by living arrangement: **1,543 of 1,544 agree to under \$1**.
+      Negative discounts went **459 → 0**; coverage stayed 1,907; `incomplete_coa` was
+      retired, so `flagged_count` fell 379 → 181.
+- [x] **Replaced the percent-scaling heuristic** with `config.RATE_COLUMNS`, declared
+      from each variable's dictionary entry, plus a post-conversion range check that
+      raises instead of scoring wrong.
+- [x] **Tested the equal weighting.** Defensible, and kept — but *not neutral*:
+      nominal weights are equal while realised influence is not (Spearman vs final
+      score: affordability **+0.107**, graduation +0.667, generosity **+0.803**),
+      because affordability correlates negatively with the other two. Pre-existing, not
+      caused by the COA change. Full numbers in `FORMULAS.md` §5.
+- [x] **Weights are configurable** via `config.VALUE_WEIGHTS` / env vars, normalised,
+      and reported in `/api/meta` as `value_weights`.
+
+**Done:** `PROJECT_BRIEF.md` §6 Still open is empty; its four entries moved to Resolved.
+Remaining trade-offs are recorded in `FORMULAS.md` §3 rather than left implicit.
 
 ### Phase 4 — Split merit aid from need-based aid (Common Data Set) ⏸ *deferred by decision, 2026-10-28*
 
@@ -387,7 +406,7 @@ Reverting is: restore those files and revert the filename commit.
 | Risk | Impact | Mitigation |
 |---|---|---|
 | Real IPEDS column names differ from the hardcoded ones | Backend won't start | Phase 1 verification step; report, don't silently rename |
-| `COA` understates the real cost basket | Biases `DISCOUNT` and `AID_SHARE` on every row | Phase 3, item 1 — highest-priority open question |
+| ~~`COA` understates the real cost basket~~ | ~~Biases `DISCOUNT` and `AID_SHARE`~~ | ✅ **resolved Phase 3** — COA recovered from the published net-price identity |
 | GKE Ingress health-checks `/` | 502s on `/api/*` with the site up | Phase 8 — fix manifests before first deploy |
 | `getColleges` failure is invisible to users | Empty table, no explanation | Phase 5 — the `/api/meta` path is fixed, this one is not |
 | Curated need-only list is unverified | A college wrongly labelled "need-based only" | Phase 4 — verify all 26 against CDS H2A before relying on it |

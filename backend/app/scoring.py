@@ -1,7 +1,22 @@
 """Metric + score calculations. Kept separate so the formulas are easy to audit."""
 import pandas as pd
 
+from . import config
 from .merit_policy import NEED_ONLY, merit_policy
+
+
+def value_weights() -> dict:
+    """The Value Score weights in force, normalised to sum to 1.
+
+    Normalising means a deployment can set 2/1/1 without also having to divide by 4,
+    and that no setting can quietly push scores off the 0-100 scale. Reported through
+    /api/meta so the weighting is auditable rather than implicit.
+    """
+    w = dict(config.VALUE_WEIGHTS)
+    total = sum(w.values())
+    if total <= 0:
+        raise ValueError(f"Value Score weights must sum to more than 0, got {w}")
+    return {k: v / total for k, v in w.items()}
 
 
 def pct_rank(series: pd.Series, higher_is_better: bool = True) -> pd.Series:
@@ -25,6 +40,10 @@ def add_metrics(df: pd.DataFrame) -> pd.DataFrame:
         df["COA_COMPLETE"] = df["COA"].notna()
 
     # Discount = what the sticker hides vs what mid-income families actually pay.
+    # Since COA is now recovered as net price + the band's average grant, this is
+    # identically that published grant figure -- it cannot go negative, where the old
+    # hand-summed COA made it negative for 459 of 1907 colleges. The metric did not
+    # become circular; it became the published number it was always trying to estimate.
     df["DISCOUNT"] = df["COA"] - df["NET_PRICE_MID"]
 
     # MGI (original assignment): grant / tuition sticker. Named "Merit Generosity
@@ -41,7 +60,7 @@ def add_metrics(df: pd.DataFrame) -> pd.DataFrame:
     # Net price ratio: share of sticker a family still pays. Lower = better.
     df["NET_PRICE_RATIO"] = df["NET_PRICE_MID"] / df["COA"]
 
-    # --- Value Score (0-100): mean of 3 equally-weighted percentile ranks ---
+    # --- Value Score (0-100): weighted mean of 3 percentile ranks ---
     affordability = pct_rank(df["NET_PRICE_MID"], higher_is_better=False)  # cheaper = better
     quality = pct_rank(df["GRAD_RATE"], higher_is_better=True)
     generosity = pct_rank(df["AID_SHARE"], higher_is_better=True)
@@ -49,7 +68,12 @@ def add_metrics(df: pd.DataFrame) -> pd.DataFrame:
     # NOT scoreable, and rank_and_filter() drops it rather than ranking it last or
     # crediting it with imputed data. (The former `fill_value=NaN` was a no-op
     # that read as if it handled missing values.)
-    df["VALUE_SCORE"] = (affordability + quality + generosity) / 3.0 * 100.0
+    w = value_weights()
+    df["VALUE_SCORE"] = (
+        affordability * w["affordability"]
+        + quality * w["graduation"]
+        + generosity * w["generosity"]
+    ) * 100.0
 
     # --- Legacy composite (the original formula, kept for comparison) ---
     df["COMPOSITE_LEGACY"] = (df["MGI"] + df["GRAD_RATE"]) / df["NET_PRICE_RATIO"]
@@ -92,6 +116,15 @@ def _risk_flags(row) -> str:
         flags.append("incomplete_coa")
     if pd.isna(row.get("GRAD_RATE")):
         flags.append("no_grad_rate")
+    aid_share = row.get("AID_SHARE")
+    if pd.notna(aid_share) and aid_share > 1:
+        # Average institutional grant exceeds the whole cost of attendance, which
+        # cannot be true of one student. IGRNT_A is averaged over a different cohort
+        # than COA (all aided undergraduates, not the $75k-$110k Title IV band), so
+        # the two can disagree at an institution whose aided students are unlike its
+        # mid-income ones. Generosity is unusable for that college, so it is flagged
+        # rather than left to top the ranking. One college in IPEDS 2022-23.
+        flags.append("aid_share_above_coa")
     return ",".join(flags)
 
 

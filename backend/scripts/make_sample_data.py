@@ -33,10 +33,16 @@ pd.DataFrame({"UNITID": unitids, "INSTNM": names, "STABBR": states,
 # One SFA file, matching IPEDS. Net price splits across two mutually exclusive
 # columns -- NPT442 for private institutions, NPIS442 for public (in-state) -- so
 # the sample data exercises the coalescing in data.net_price() rather than hiding it.
+# The band-grant columns split on exactly the same public/private line, and COA is
+# built from them (net price + band grant), so they have to be here or every sampled
+# college would be unscoreable. band_grant is the mirror of net_price.
 is_public = control == 1
+band_grant = rng.integers(3000, 22000, N)
 pd.DataFrame({"UNITID": unitids, "IGRNT_A": grant,
               "NPT442": np.where(is_public, np.nan, net),
-              "NPIS442": np.where(is_public, net, np.nan)}
+              "NPIS442": np.where(is_public, net, np.nan),
+              "GRN4A42": np.where(is_public, np.nan, band_grant),
+              "GIS4A42": np.where(is_public, band_grant, np.nan)}
              ).to_csv(f"{DATA}/SFA2122.csv", index=False)
 pd.DataFrame({"UNITID": unitids, "TUITION2": tuition,
               "CHG4AY3": room_board, "CHG5AY3": books}).to_csv(f"{DATA}/IC2022_AY.csv", index=False)

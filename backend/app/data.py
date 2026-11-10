@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
+from . import scoring
 from .scoring import add_metrics
 
 
@@ -50,6 +51,52 @@ def net_price(sfa: pd.DataFrame) -> pd.Series:
     return price
 
 
+def band_grant(sfa: pd.DataFrame) -> pd.Series:
+    """Average grant+scholarship aid for the same $75k-$110k Title IV cohort as net price.
+
+    Split across two mutually exclusive variables on exactly the same public/private
+    lines as NPIS442/NPT442, so it coalesces the same way:
+
+        GRN4A42  private institutions
+        GIS4A42  public institutions, in-state
+
+    Verified on IPEDS 2022-23: never both populated (0 of 1907), 726 publics carry
+    GIS4A42 and 1181 privates carry GRN4A42 -- the identical 726/1181 split as the
+    net-price pair -- and neither ever appears without its matching net-price column.
+
+    This is what makes COA reconstructible; see build_dataset().
+    """
+    grant = sfa["GRN4A42"] if "GRN4A42" in sfa.columns else pd.Series(np.nan, index=sfa.index)
+    if "GIS4A42" in sfa.columns:
+        grant = grant.combine_first(sfa["GIS4A42"])
+    return grant
+
+
+def load_rates(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert declared-percent rate columns to 0..1, then verify the result.
+
+    config.RATE_COLUMNS declares each column's unit from its IPEDS dictionary entry
+    instead of inferring it from the values. The old `max > 1.5` test read the data to
+    decide what the data meant, which fails silently on any subset whose rates all
+    happen to be small.
+    """
+    for col, unit in config.RATE_COLUMNS.items():
+        if col not in df.columns:
+            continue
+        if unit == "percent":
+            df[col] = df[col] / 100.0
+        elif unit != "fraction":
+            raise ValueError(f"{col}: unknown declared unit {unit!r}")
+        vals = df[col].dropna()
+        if len(vals) and (vals.min() < 0 or vals.max() > 1):
+            raise ValueError(
+                f"{col} declared {unit!r} but lands outside 0..1 after conversion "
+                f"(min={vals.min()}, max={vals.max()}). The source file's scale "
+                f"changed -- fix the declaration in config.RATE_COLUMNS."
+            )
+    return df
+
+
 @functools.lru_cache(maxsize=1)
 def build_dataset() -> pd.DataFrame:
     """Merge + clean + add metrics. Cached so it loads once per process."""
@@ -64,21 +111,10 @@ def build_dataset() -> pd.DataFrame:
     hd["CONTROL_LABEL"] = hd["CONTROL"].map({1: "Public", 2: "Private nonprofit",
                                              3: "Private for-profit"}).fillna("Other")
 
-    sfa = _clean_missing(_read("sfa"), ["IGRNT_A", "NPT442", "NPIS442"])
-    sfa = sfa.assign(NET_PRICE_MID=net_price(sfa))[["UNITID", "IGRNT_A", "NET_PRICE_MID"]]
-    ic = _clean_missing(_read("ic_ay"), ["TUITION2", "CHG4AY3", "CHG5AY3", "CHG6AY3", "CHG7AY3"])
-    # Build COA (cost of attendance) if the component columns exist.
-    coa_parts = [c for c in ["TUITION2", "CHG4AY3", "CHG5AY3"] if c in ic.columns]
-    ic_cols = ["UNITID", "TUITION2"]
-    if coa_parts:
-        # min_count=1 keeps a partial sum rather than NaN, so a college reporting
-        # tuition but no room/board still gets a COA -- an understated one. Record
-        # whether every component was actually present so that case can be flagged
-        # instead of silently passing as a complete sticker.
-        ic["COA"] = ic[coa_parts].sum(axis=1, min_count=1)
-        ic["COA_COMPLETE"] = ic[coa_parts].notna().all(axis=1)
-        ic_cols += ["COA", "COA_COMPLETE"]
-    ic = ic[ic_cols]
+    sfa = _clean_missing(_read("sfa"), ["IGRNT_A", "NPT442", "NPIS442", "GRN4A42", "GIS4A42"])
+    sfa = sfa.assign(NET_PRICE_MID=net_price(sfa), BAND_GRANT=band_grant(sfa))
+    sfa = sfa[["UNITID", "IGRNT_A", "NET_PRICE_MID", "BAND_GRANT"]]
+    ic = _clean_missing(_read("ic_ay"), ["TUITION2"])[["UNITID", "TUITION2"]]
 
     adm = _clean_missing(_read("adm"), ["SATVR75", "SATMT75"])[["UNITID", "SATVR75", "SATMT75"]]
     drvadm = _clean_missing(_read("drvadm"), ["DVADM01"])[["UNITID", "DVADM01"]] \
@@ -90,15 +126,31 @@ def build_dataset() -> pd.DataFrame:
     for other in [sfa, ic, adm, drvadm, drvgr]:
         df = df.merge(other, on="UNITID", how="left")
 
-    if "COA" not in df.columns:
-        df["COA"] = df["TUITION2"]
-        df["COA_COMPLETE"] = df["COA"].notna()
+    # --- COA: the cost basket IPEDS actually netted against ---------------------
+    # Not hand-summed from charge columns any more. IPEDS defines net price as
+    #
+    #     net price = total cost of attendance - average grant and scholarship aid
+    #
+    # for one cohort (full-time first-time Title IV recipients, income $75k-$110k,
+    # 2021-22), so the COA that net price was computed against is recoverable by
+    # adding the published average grant for that same cohort straight back on.
+    #
+    # Verified two ways on the real 1907:
+    #   * against an independent reconstruction from the 2021-22 charge columns
+    #     weighted by living arrangement (the formula the dictionary spells out) --
+    #     the two agree to under $1 on 1543 of 1544 institutions, median diff $0;
+    #   * no college can land below its own net price, where the old hand-summed COA
+    #     put 459 of 1907 (24%) at a negative discount, which is impossible.
+    #
+    # The hand-summed version understated cost two ways: TUITION2 is tuition with no
+    # required fees, and it omitted on-campus other expenses entirely. It also mixed
+    # 2022-23 charges against a 2021-22 net price. This matches both year and basket.
+    df["COA"] = df["NET_PRICE_MID"] + df["BAND_GRANT"]
+    df["COA_COMPLETE"] = df["NET_PRICE_MID"].notna() & df["BAND_GRANT"].notna()
 
-    # SAT 75th total; percentages -> 0..1 scale.
+    # SAT 75th total; rate columns scaled by declaration, not by inspection.
     df["SAT_TOTAL_75"] = df["SATVR75"] + df["SATMT75"]
-    for c in ["ADMISSIONS_RATE", "GRAD_RATE"]:
-        if df[c].max(skipna=True) and df[c].max(skipna=True) > 1.5:
-            df[c] = df[c] / 100.0
+    df = load_rates(df)
 
     # Drop rows with no financial basis to analyze.
     df = df.dropna(subset=["TUITION2", "IGRNT_A", "NET_PRICE_MID"], how="any")
@@ -149,15 +201,26 @@ def meta() -> dict:
                 "awards combined. IPEDS publishes no split, so MGI and Aid Share "
                 "measure generosity, not merit."
             ),
+            "cost_of_attendance": (
+                "COA is the cost basket IPEDS itself netted against: the published "
+                "average grant for the $75k-$110k Title IV cohort added back to that "
+                "cohort's net price (2021-22). It is NOT a hand-summed sticker, and "
+                "runs about 6% under the on-campus published price because IPEDS "
+                "weights room/board across living arrangements. DISCOUNT is therefore "
+                "identically that published grant figure."
+            ),
             "merit_policy": (
                 "MERIT_POLICY is 'need_only' for colleges on a curated list of "
                 "institutions that publicly award no merit scholarships, and "
                 "'unknown' otherwise. Unknown means unchecked."
             ),
         },
+        # The Value Score weighting actually in force, normalised. Reported so the
+        # methodology is auditable from the API rather than implicit in the code.
+        "value_weights": scoring.value_weights(),
         "defaults": config.DEFAULTS,
         "dimensions": [
-            {"key": "sticker", "label": "Total Sticker (COA)", "column": "COA",
+            {"key": "sticker", "label": "Total Cost of Attendance", "column": "COA",
              "required_for": ["Aid Share", "Discount"]},
             {"key": "grant", "label": "Avg Institutional Grant", "column": "IGRNT_A",
              "required_for": ["Aid Share", "Value Score"]},

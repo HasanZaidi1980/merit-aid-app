@@ -22,7 +22,7 @@ import Explain from './Explain.jsx';
 // lesson: two of the headline metrics do not affect the ranking at all.
 const SLIDERS = [
   { key: 'tuition', label: 'Tuition', dim: 'tuition', term: 'sticker', step: 500, feeds: 'sticker' },
-  { key: 'extras', label: 'Housing + books', dim: 'extras', term: 'sticker', step: 500, feeds: 'sticker' },
+  { key: 'extras', label: 'Housing, books, other', dim: 'extras', term: 'sticker', step: 500, feeds: 'sticker' },
   { key: 'grant', label: 'Avg institutional grant', dim: 'grant', term: 'grant', step: 500, feeds: 'generosity' },
   { key: 'netPrice', label: 'Net price', dim: 'net_price', term: 'net_price', step: 500, feeds: 'affordability' },
   { key: 'gradRate', label: 'Graduation rate', dim: 'grad_rate', term: 'grad_rate', step: 0.01, feeds: 'quality' },

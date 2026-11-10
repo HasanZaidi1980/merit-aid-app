@@ -13,9 +13,14 @@ Everything here was captured from the **live** app at `http://136.68.78.253/`. T
 ### `GET /api/meta`
 Dataset stats + defaults + the toggleable dimensions. Response as captured from the
 reference app, **plus** the three keys this reconstruction adds —
-`no_merit_aid_count`, `metric_notes` and `defaults.exclude_no_merit`, each marked
-below. (The reference values for `flagged_count`, `data_gap_count` and
+`no_merit_aid_count`, `metric_notes`, `value_weights` and `defaults.exclude_no_merit`,
+each marked below. (The reference values for `flagged_count`, `data_gap_count` and
 `unscoreable_count` predate the RISK_FLAGS/DATA_GAPS split and no longer match ours.)
+
+**`median_aid_share` is no longer compared against the reference's 0.3184.** That
+figure was derived from the reference app's understated cost of attendance; Phase 3
+replaced ours with the basket IPEDS itself nets against, so the two are not measuring
+the same denominator. Ours is 0.2942. See `FORMULAS.md` §3.
 ```json
 {
   "colleges_in_dataset": 1907,
@@ -28,7 +33,11 @@ below. (The reference values for `flagged_count`, `data_gap_count` and
   "unscoreable_count": 0,
   "sat_coverage": 985,
   "no_merit_aid_count": 26,                                      /* added */
-  "metric_notes": { "grant_aid": "...", "merit_policy": "..." }, /* added */
+  "metric_notes": { "grant_aid": "...", "merit_policy": "...",
+                    "cost_of_attendance": "..." },               /* added */
+  "value_weights": {                                             /* added */
+    "affordability": 0.3333, "graduation": 0.3333, "generosity": 0.3333
+  },
   "defaults": {
     "max_net_price": 25000,
     "mgi_at_least_median": true,
@@ -37,7 +46,7 @@ below. (The reference values for `flagged_count`, `data_gap_count` and
     "exclude_no_merit": false                                    /* added */
   },
   "dimensions": [
-    { "key": "sticker",    "label": "Total Sticker (COA)",     "column": "COA",           "required_for": ["Aid Share", "Discount"] },
+    { "key": "sticker",    "label": "Total Cost of Attendance", "column": "COA",          "required_for": ["Aid Share", "Discount"] },
     { "key": "grant",      "label": "Avg Institutional Grant", "column": "IGRNT_A",        "required_for": ["Aid Share", "Value Score"] },
     { "key": "net_price",  "label": "Net Price",               "column": "NET_PRICE_MID",  "required_for": ["Value Score", "Discount"] },
     { "key": "admit_rate", "label": "Admissions Rate",         "column": "...",  "required_for": ["..."] }

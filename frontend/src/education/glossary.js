@@ -12,9 +12,9 @@
 
 export const TERMS = {
   sticker: {
-    label: 'Total Sticker (COA)',
-    what: 'The full published price for one year.',
-    how: 'tuition + housing + books',
+    label: 'Total Cost of Attendance',
+    what: 'The full price for one year, before any aid.',
+    how: 'tuition + fees + housing + books + expenses',
     myth: 'Almost nobody pays this.',
     unit: 'money',
   },

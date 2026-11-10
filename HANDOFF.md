@@ -12,7 +12,7 @@ For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next f
   github.com/HasanZaidi1980/merit-aid-app.
 - **Works locally.** Docker (`docker compose up --build` → http://localhost:8080) and
   direct (uvicorn :8000 + vite :5173).
-- **17 tests pass.** `cd backend && pytest` — in-memory fixtures, no data files needed.
+- **29 tests pass.** `cd backend && pytest` — in-memory fixtures, no data files needed.
 - **Not deployed to GCP.** Nothing pushed to GKE/Artifact Registry. `DEPLOYMENT.md` has
   the steps; they have not been run. The manifests contain a known bug — see
   `PROJECT_STATE.md` Phase 8.
@@ -66,15 +66,13 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
   the reference app's own numbers — `colleges_in_dataset` 1,907, `net_price_min` 2,200,
   `net_price_max` 63,997 and `sat_coverage` 985 all reproduce **exactly**.
 - **Unverified — audit these:**
-  - **COA construction** vs net price. The one unexplained gap: `median_aid_share` is
-    0.343 against the reference's 0.3184. A larger denominator closes it, which points at
-    COA. `PROJECT_STATE.md` Phase 3 has the fix.
   - **Percentage-scaling heuristic** for admit/grad rates (`max > 1.5` is fragile).
   - **Equal 1/3 weighting** in Value Score is an assertion, not a finding.
   - **The curated need-only list** (26 colleges) is provisional — compiled from published
     institutional policy, not yet checked against each school's Common Data Set.
   - Reference app showed intermittent **502s** on `/api/*` — reproduce under load.
-- **17 tests** cover scoring, the flag split, net-price coalescing and merit policy.
+- **29 tests** cover scoring, the flag split, net-price coalescing, merit policy, the
+  COA basis, declared rate scales and the Value Score weights.
   No endpoint tests yet.
 
 ## Data
@@ -96,14 +94,14 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
 **See `PROJECT_STATE.md`** — it owns the roadmap, phase by phase, with a "done when"
 for each. Don't keep a second list here; it drifts.
 
-Phases 1-2 are **complete**: real data loaded and validated. Phase 3 (the COA
-question) is unblocked and is the highest-value next change. Phase 4 — splitting
-merit aid from need-based aid via the Common Data Set — is **deferred by decision**,
-not dropped.
+Phases 1-3 are **complete**: real data loaded, validated, and the open scoring
+questions closed. Phase 4 — splitting merit aid from need-based aid via the Common
+Data Set — is **deferred by decision**, not dropped, and is the next real change.
 
-Recent work: the app no longer calls any generosity metric "merit" (IPEDS conflates
-need-based and merit grants and publishes no split), an education section was added,
-and the trade-offs chart was rebuilt so its lines can be told apart.
+Recent work: Phase 3 replaced the hand-summed cost of attendance with the basket
+IPEDS itself nets against, which removed 459 impossible negative discounts; rate
+scaling became a declaration rather than a guess; and the Value Score weights became
+configurable and auditable. `FORMULAS.md` is new and holds all of it.
 
 ## Guardrails
 
@@ -118,6 +116,7 @@ merit-aid-app/
   HANDOFF.md              ← this file (current status)
   PROJECT_STATE.md        status + the full roadmap to completion — read next
   PROJECT_BRIEF.md        full architecture, metrics, task list
+  FORMULAS.md             every formula + why — read before changing any of them
   README.md               how to run
   ANALYSIS.md             what the reference app is + cloud/hosting findings
   observed-api-contract.md  exact endpoints + 25-field schema

@@ -252,16 +252,62 @@ In practice `no_grad_rate` can never appear on a *returned* row, because step 2 
 
 All six are covered by `backend/tests/test_scoring.py`.
 
+### Resolved (2026-11-10, Phase 3)
+
+Measurements, candidate comparisons and accepted trade-offs live in **`FORMULAS.md`**,
+created by this phase — `CLAUDE.md` had always referenced it but it did not exist.
+
+- **COA vs net price comparability — closed.** The two were never apples-to-apples:
+  the hand-summed `TUITION2 + CHG4AY3 + CHG5AY3` omitted required fees and on-campus
+  other expenses, and measured 2022-23 charges against a 2021-22 net price. It put
+  **459 of 1,907 colleges (24%) at a negative discount** — net price above their entire
+  cost of attendance, impossible by definition.
+
+  The fix was *not* `DRVIC2022`, which the plan had assumed. IPEDS defines net price as
+  *total cost of attendance − average grant and scholarship aid* for one cohort, and
+  publishes that average grant for the **same** cohort, band and year (`GIS4A42`
+  public / `GRN4A42` private). Adding it back recovers the exact basket:
+  `COA = NET_PRICE_MID + BAND_GRANT`. Comparable by construction, not by assumption.
+
+  Verified against an independent reconstruction of IPEDS' own weighted formula from
+  the 2021-22 charge columns and living-arrangement counts: **1,543 of 1,544 agree to
+  under \$1, median difference \$0**. Negative discounts **459 → 0**, coverage still
+  1,907, `incomplete_coa` retired.
+
+  *Accepted trade-off:* COA is a cohort-weighted basket, not an on-campus published
+  sticker — about 6% under `CINSON`. The UI says "Total Cost of Attendance" for that
+  reason. `DISCOUNT` is now identically the published band grant.
+
+- **Percent-scaling heuristic — replaced.** `config.RATE_COLUMNS` declares each rate
+  column's unit from its dictionary entry, and `load_rates()` verifies the converted
+  values land in 0..1 and raises otherwise. The old `max > 1.5` test fired correctly on
+  the full universe but read the data to decide what the data meant; 7.4% of `GBA4RTT`
+  values are already ≤ 1.5, so a filtered subset could have been left 100× too low
+  silently.
+
+- **Equal weighting — tested, and kept, but it is not neutral.** Each component carries
+  a near-identical share of variance (32.1 / 34.9 / 33.0%), yet influence on the final
+  ordering is very unequal: Spearman against the final score is **+0.107**
+  affordability, +0.667 graduation, **+0.803** generosity. Affordability correlates
+  *negatively* with the other two (−0.447, −0.234) so it largely cancels, while
+  graduation and generosity reinforce (+0.510). **Pre-existing** — the old COA gave
+  +0.152 / +0.615 / +0.797. The top 20 is robust to moderate reweighting (15–18 of 20
+  retained at ×2 / ×0.5) but not to single-component scoring (2–12 retained), so the
+  blend is real rather than one component in disguise.
+
+- **Weights are configurable.** `config.VALUE_WEIGHTS`, overridable per deployment by
+  env var, normalised to sum to 1, and reported through `/api/meta` as `value_weights`.
+
 ### Still open
 
-Ordered by how much they could distort results.
+Nothing. Every entry above is either resolved or a recorded trade-off in `FORMULAS.md`.
 
-1. **COA vs net price comparability.** `DISCOUNT` and `NET_PRICE_RATIO` assume `COA` and the net-price variables cover the same basket of costs. IPEDS net price is defined against *total* cost of attendance including allowances this hand-summed COA doesn't reconstruct, so the two are probably not apples-to-apples.
+Two items are tracked elsewhere and are **not** scoring questions:
 
-   This is now the **only unexplained gap** against the reference app: with publics included, four of five `/api/meta` metrics match exactly, and `median_aid_share` is 0.343 against the reference's 0.3184. A larger denominator closes it, which points straight at COA. IPEDS publishes **`DRVIC2022`** ("Total cost of attendance: Academic year 2022-23"), almost certainly what the reference used. Switching to it would also retire the 174 `incomplete_coa` colleges. **Verify the variant matches the net-price basket before switching** — COA differs by in-state/out-of-state and on/off-campus, and public net price is in-state.
-2. **Percent-scaling heuristic.** Dividing by 100 only when `max > 1.5` is fragile: a real dataset where every rate happens to be ≤ 1.5 (or already fractional) would be mis-scaled with no error. Prefer an explicit per-column declaration.
-3. **Equal weighting is an assertion, not a finding.** ⅓/⅓/⅓ was chosen because the reference app described equal weight. Whether that produces sensible rankings on the real IPEDS data is untested — check the Value Score distribution and each component's correlation with the final rank.
-4. **Weights are not configurable.** Exposing them (and reporting them in `/api/meta`) would make the methodology auditable instead of implicit.
+- Splitting merit aid from need-based aid — `PROJECT_STATE.md` Phase 4, deferred by
+  decision. `IGRNT_A` conflates them and IPEDS publishes no split.
+- `GOTCHAS.md` is referenced by `CLAUDE.md` but does not exist. Out of scope for
+  Phase 3; noted so it is not mistaken for a file someone deleted.
 
 ---
 
