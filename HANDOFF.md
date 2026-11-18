@@ -12,7 +12,7 @@ For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next f
   github.com/HasanZaidi1980/merit-aid-app.
 - **Works locally.** Docker (`docker compose up --build` → http://localhost:8080) and
   direct (uvicorn :8000 + vite :5173).
-- **33 tests pass.** `cd backend && pytest` — in-memory fixtures, no data files needed.
+- **40 tests pass.** `cd backend && pytest` — in-memory fixtures, no data files needed.
 - **Not deployed to GCP.** Nothing pushed to GKE/Artifact Registry. `DEPLOYMENT.md` has
   the steps; they have not been run. The manifests contain a known bug — see
   `PROJECT_STATE.md` Phase 8.
@@ -72,7 +72,7 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
     26 entries were wrong.** Now CDS-sourced with provenance for 9 institutions;
     the other 17 are `unknown`. A full crawl was measured and recommended against.
   - Reference app showed intermittent **502s** on `/api/*` — reproduce under load.
-- **33 tests** cover scoring, the flag split, net-price coalescing, merit policy and
+- **40 tests** cover scoring, the flag split, net-price coalescing, merit policy and
   its provenance, the COA basis, declared rate scales and the Value Score weights.
   No endpoint tests yet.
 
@@ -96,7 +96,8 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
 for each. Don't keep a second list here; it drifts.
 
 Phases 1-3.5 are **complete**. Phase 4 is **scoped down by measurement**: the merit
-split is CDS-sourced for 9 of 1,907 with provenance, and a 1,907-institution crawl is
+split is CDS-sourced across the default top 50 — 50 attempted, 23 resolved; 24 of
+1,907 dataset-wide — with provenance and an expiry, and a 1,907-institution crawl is
 recommended against (38% end-to-end success on the 26 best-documented institutions;
 an existing third-party archive finds no public CDS for 49% of 3,000 schools).
 Phase 5 (error states, empty state) is the next real change.

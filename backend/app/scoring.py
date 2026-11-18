@@ -2,7 +2,8 @@
 import pandas as pd
 
 from . import config
-from .merit_policy import NEED_ONLY, merit_policy
+from .merit_policy import (NEED_ONLY, merit_policy, merit_policy_status,
+                           merit_policy_year)
 
 
 def value_weights() -> dict:
@@ -83,6 +84,13 @@ def add_metrics(df: pd.DataFrame) -> pd.DataFrame:
     # in our data, so it never joins RISK_FLAGS or DATA_GAPS and never affects a
     # score. It only drives disclosure in the UI and the opt-in filter below.
     df["MERIT_POLICY"] = merit_policy(df["UNITID"])
+    # The year is load-bearing, not decoration: Yale answers H2A line n 6/28/1,
+    # 6/24/0 and 0/0/0 in three consecutive editions. A label the UI cannot date
+    # is a claim the user has to take on trust, so the edition travels with it.
+    df["MERIT_POLICY_YEAR"] = merit_policy_year(df["UNITID"])
+    # And `unknown` has two causes that must not read alike -- read the CDS and
+    # it does not publish H2A, versus never looked.
+    df["MERIT_POLICY_STATUS"] = merit_policy_status(df["UNITID"])
 
     # --- data-quality bookkeeping ---
     df["COMPONENTS_USED"] = df.apply(_components_used, axis=1)

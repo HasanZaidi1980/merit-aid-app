@@ -4,7 +4,13 @@
 # Test runner.
 pytest==8.3.3
 
-# Reads the IPEDS dictionary .xlsx files (varlist / Description sheets). CLAUDE.md
-# requires every claim about a column to come from its dictionary entry, so this is
-# needed to do the verification, not to run the app.
+# Reads the IPEDS dictionary .xlsx files (varlist / Description sheets), and the
+# institutions that publish their Common Data Set as a workbook rather than a PDF
+# (Vanderbilt). CLAUDE.md requires every claim about a column to come from its
+# dictionary entry, so this is needed to do the verification, not to run the app.
 openpyxl==3.1.5
+
+# Reads Common Data Set PDFs for the MERIT_POLICY sourcing in merit_policy.py --
+# both the page text and, for a fillable CDS, the AcroForm fields where the H2A
+# values actually live (Carleton, Davidson, Wake Forest all read that way).
+pypdf==7.1.0

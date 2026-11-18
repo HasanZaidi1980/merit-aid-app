@@ -181,7 +181,8 @@ def meta() -> dict:
         "unscoreable_count": int(df["VALUE_SCORE"].isna().sum()),
         "sat_coverage": int(df["SAT_TOTAL_75"].notna().sum()),
         # Colleges verified against their own CDS H2A. Shown so the UI can state how
-        # far the sourcing got rather than imply the dataset has been covered.
+        # far the sourcing got rather than imply the dataset has been covered: the
+        # denominator that matters is `attempted`, not `colleges_in_dataset`.
         "no_merit_aid_count": int((df["MERIT_POLICY"] == "need_only").sum()),
         "awards_merit_count": int((df["MERIT_POLICY"] == "awards_merit").sum()),
         "merit_policy_coverage": merit_policy.coverage(),
@@ -206,7 +207,12 @@ def meta() -> dict:
                 "section H2A line n. 'need_only' = that line reported zero for the "
                 "year checked; 'awards_merit' = it reported more than zero; "
                 "'unknown' = unchecked, which is almost the whole dataset. It covers "
-                "academic merit only -- athletic awards are excluded by H2A itself."
+                "academic merit only -- athletic awards are excluded by H2A itself. "
+                "MERIT_POLICY_YEAR names the CDS edition a verdict came from and "
+                "MERIT_POLICY_STATUS separates 'checked, not published' from "
+                "'never checked'. Sourcing was scoped to the default top 50 "
+                "shortlist; full-dataset coverage was measured at roughly 38% and "
+                "rejected. See merit_policy_coverage.scope."
             ),
         },
         # The Value Score weighting actually in force, normalised. Reported so the

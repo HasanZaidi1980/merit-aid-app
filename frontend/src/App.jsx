@@ -140,11 +140,27 @@ export default function App() {
       // from that college's own CDS H2A gets a label, and each label says the year
       // it came from, because the answer changes between editions — Yale reported
       // 24 non-need awards in 2024-25 and zero in 2025-26.
+      const yr = r.MERIT_POLICY_YEAR ? ` ${r.MERIT_POLICY_YEAR}` : '';
       if (r[k] === 'need_only') {
-        return <span className="tag-need" title="Reported zero on CDS H2A line n (academic merit only; athletic awards are excluded from that line)">no merit aid</span>;
+        return (
+          <span className="tag-need" title={`Reported zero on CDS H2A line n in the ${r.MERIT_POLICY_YEAR} edition (academic merit only; athletic awards are excluded from that line). A later edition can differ.`}>
+            no merit aid<span className="tag-yr">{yr}</span>
+          </span>
+        );
       }
       if (r[k] === 'awards_merit') {
-        return <span className="tag-merit" title="Reported more than zero on CDS H2A line n">awards merit</span>;
+        return (
+          <span className="tag-merit" title={`Reported more than zero on CDS H2A line n in the ${r.MERIT_POLICY_YEAR} edition`}>
+            awards merit<span className="tag-yr">{yr}</span>
+          </span>
+        );
+      }
+      // Both remaining states are "no answer", but they are not the same no
+      // answer, and flattening them to one dash is how a gap starts reading as a
+      // finding. "not published" means we read the college's CDS and H2A was not
+      // in it; the dash means nobody has looked.
+      if (r.MERIT_POLICY_STATUS === 'attempted_unresolved') {
+        return <span className="tag-unres" title="We looked for this college's Common Data Set and could not read H2A line n from it. This is not a finding about its aid policy.">not published</span>;
       }
       return '—';
     }

@@ -197,6 +197,7 @@ def test_api_row_schema_is_additive_only():
         "COMPONENTS_USED", "RISK_FLAGS", "MGI", "NET_PRICE_RATIO", "COMPOSITE_LEGACY",
     }
     assert observed_23 <= set(ROW_FIELDS)
-    assert len(ROW_FIELDS) == 25
-    assert set(ROW_FIELDS) - observed_23 == {"DATA_GAPS", "MERIT_POLICY"}
+    assert len(ROW_FIELDS) == 27
+    assert set(ROW_FIELDS) - observed_23 == {
+        "DATA_GAPS", "MERIT_POLICY", "MERIT_POLICY_YEAR", "MERIT_POLICY_STATUS"}
     assert len(ROW_FIELDS) == len(set(ROW_FIELDS))

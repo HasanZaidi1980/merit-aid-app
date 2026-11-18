@@ -13,13 +13,22 @@ these tests pin the properties that make it honest rather than misleading:
      provenance rots silently, which is exactly what happened to the version this
      replaced: five of its 26 entries asserted the opposite of what the
      institution's own CDS reported.
+  4. The year must reach the row. The UI claimed each label named its year while
+     rendering no year at all, because cds_year never left this module.
+  5. A verdict must expire. Yale answers H2A line n differently in three
+     consecutive editions, so an old record is not evidence about today.
 """
+import re
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from app.merit_policy import (AWARDS_MERIT, NEED_ONLY, UNKNOWN, coverage,
-                              merit_policy, provenance, roster, unverified)
+from app.merit_policy import (ATTEMPTED_UNRESOLVED, AWARDS_MERIT, CURRENT_EDITION,
+                              NEED_ONLY, NOT_CHECKED, RESOLVED,
+                              STALE_AFTER_EDITIONS, UNKNOWN, coverage, is_current,
+                              merit_policy, merit_policy_status, merit_policy_year,
+                              provenance, roster, unverified)
 from app.scoring import add_metrics, rank_and_filter
 
 # Yale and Haverford report zero on CDS H2A line n; Harvard and Stanford report more
@@ -27,6 +36,7 @@ from app.scoring import add_metrics, rank_and_filter
 # mislabelled -- these constants are the regression guard for that.
 YALE, HAVERFORD = 130794, 212911
 HARVARD, STANFORD = 166027, 243744
+MIT = 166683
 NOT_ON_LIST = 999001  # no such institution; stands in for "never checked"
 
 HEALTHY = dict(TUITION2=30000.0, CHG4AY3=12000.0, CHG5AY3=1200.0, IGRNT_A=15000.0,
@@ -193,3 +203,106 @@ def test_summary_skips_nan_and_survives_an_empty_series():
     assert sum(s["bin_counts"]) == 3
 
     assert _summary(pd.Series([], dtype=float)) == {"n": 0}
+
+
+def test_the_year_reaches_the_row():
+    """Defect: the UI said "each label names the year it came from" and rendered no
+    year, because cds_year never left merit_policy.py. A claim the user cannot date
+    is a claim they have to take on trust."""
+    ids = pd.Series([YALE, HARVARD, NOT_ON_LIST])
+    years = merit_policy_year(ids)
+
+    assert years.iloc[0] and years.iloc[1]
+    for y in years.iloc[:2]:
+        assert re.fullmatch(r"\d{4}-\d{2}", y), y
+    # Unchecked carries no year -- not a blank that renders as one.
+    assert years.iloc[2] == ""
+
+    # And it has to survive the real pipeline, not just the helper.
+    df = _build([{**HEALTHY, "UNITID": YALE, "INSTNM": "Yale University"}])
+    assert df.loc[0, "MERIT_POLICY_YEAR"] == provenance(YALE)["cds_year"]
+
+
+def test_every_reported_verdict_has_a_year_on_the_row(four_colleges):
+    """Whatever carries a policy value must carry the edition behind it."""
+    for _, r in four_colleges.iterrows():
+        if r["MERIT_POLICY"] == UNKNOWN:
+            assert r["MERIT_POLICY_YEAR"] == ""
+        else:
+            assert r["MERIT_POLICY_YEAR"], r["INSTNM"]
+
+
+def test_status_separates_the_two_kinds_of_blank(four_colleges):
+    """`unknown` has two causes and they must not read alike: we read the college's
+    CDS and H2A was not in it, versus nobody looked. Collapsing them is how a
+    coverage gap starts reading as a finding."""
+    assert merit_policy_status(pd.Series([YALE])).iloc[0] == RESOLVED
+    assert merit_policy_status(pd.Series([NOT_ON_LIST])).iloc[0] == NOT_CHECKED
+
+    attempted = unverified()[0]["unitid"]
+    assert merit_policy_status(pd.Series([attempted])).iloc[0] == ATTEMPTED_UNRESOLVED
+    # Attempted-but-unresolved is still `unknown` as a policy. The status says how
+    # hard we tried; it never upgrades to an answer.
+    assert merit_policy(pd.Series([attempted])).iloc[0] == UNKNOWN
+
+    assert set(four_colleges["MERIT_POLICY_STATUS"]) <= {
+        RESOLVED, ATTEMPTED_UNRESOLVED, NOT_CHECKED}
+
+
+def test_a_stale_verdict_expires_instead_of_standing():
+    """Yale reads 6/28/1, 6/24/0 then 0/0/0 across three editions, so a verdict is
+    point-in-time. Records outside the window must revert to `unknown` on their own
+    -- nothing may age quietly into a current-sounding claim."""
+    cur = int(CURRENT_EDITION[:4])
+
+    assert is_current(CURRENT_EDITION)
+    assert is_current(f"{cur - STALE_AFTER_EDITIONS}-{str(cur - STALE_AFTER_EDITIONS + 1)[2:]}")
+    assert not is_current(f"{cur - STALE_AFTER_EDITIONS - 1}-00")
+    assert not is_current("2019-20")          # the Colby case, now a rule
+
+    # Nothing currently reported may already be outside the window.
+    for e in roster():
+        assert is_current(e["cds_year"]), e["name"]
+
+    # And an expired record is reported as attempted, with the reason saying so.
+    # Matched on the generated wording, not on the phrase "staleness window" alone --
+    # Colby's hand-written reason says that too, and it is unresolved for a different
+    # cause (it has only ever published a 2019-20 edition).
+    stale = [u for u in unverified()
+             if f"current edition {CURRENT_EDITION}" in u["reason"]]
+    assert len(stale) == coverage()["stale"]
+
+
+def test_mit_is_sourced_from_an_edition_that_actually_reports_zero():
+    """Defect: MIT was labelled need_only citing line n = "N/App". Not-applicable is
+    a non-answer, not a reported zero -- the same gap in reasoning that produced the
+    five false labels. Verified directly: MIT's 2024-25 CDS does answer line n
+    "N/App", while its 2025-26 edition reports an actual 0/0/0. The verdict stands
+    only on the edition whose evidence supports it."""
+    p = provenance(MIT)
+
+    assert p["policy"] == NEED_ONLY
+    assert p["cds_year"] == "2025-26"
+    assert p["line_n"] == "0 / 0 / 0"
+    # The non-answer must not reappear in the field the verdict rests on.
+    assert "N/App" not in p["line_n"]
+
+
+def test_no_verdict_rests_on_a_non_answer():
+    """Generalises the MIT defect across the roster. "N/App", "NA", "n/a" and a
+    blank are all refusals to answer; only a figure can carry a policy claim."""
+    NON_ANSWERS = {"", "n/app", "na", "n/a", "not reported", "-", "--"}
+    for e in roster():
+        assert e["line_n"].strip().lower() not in NON_ANSWERS, e["name"]
+        assert re.search(r"\d", e["line_n"]), e["name"]
+
+
+def test_coverage_states_its_scope_and_its_skew():
+    """A coverage number without its scope is the same mistake as a count without a
+    denominator. The sourcing covers a shortlist of mostly wealthy privates, and the
+    figure has to say so wherever it travels."""
+    c = coverage()
+    assert "top 50" in c["scope"]
+    assert c["sector_caveat"] and "private" in c["sector_caveat"]
+    assert c["current_edition"] == CURRENT_EDITION
+    assert c["stale_after_editions"] == STALE_AFTER_EDITIONS

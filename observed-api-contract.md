@@ -13,7 +13,8 @@ Everything here was captured from the **live** app at `http://136.68.78.253/`. T
 ### `GET /api/meta`
 Dataset stats + defaults + the toggleable dimensions. Response as captured from the
 reference app, **plus** the three keys this reconstruction adds —
-`no_merit_aid_count`, `metric_notes`, `value_weights` and `defaults.exclude_no_merit`,
+`no_merit_aid_count`, `awards_merit_count`, `merit_policy_coverage`,
+`metric_notes`, `value_weights` and `defaults.exclude_no_merit`,
 each marked below. (The reference values for `flagged_count`, `data_gap_count` and
 `unscoreable_count` predate the RISK_FLAGS/DATA_GAPS split and no longer match ours.)
 
@@ -32,7 +33,9 @@ the same denominator. Ours is 0.2942. See `FORMULAS.md` §3.
   "data_gap_count": 0,
   "unscoreable_count": 0,
   "sat_coverage": 985,
-  "no_merit_aid_count": 26,                                      /* added */
+  "no_merit_aid_count": 5,                                       /* added */
+  "awards_merit_count": 19,                                      /* added */
+  "merit_policy_coverage": { "verified": 24, "attempted": 56, "..." : "..." },
   "metric_notes": { "grant_aid": "...", "merit_policy": "...",
                     "cost_of_attendance": "..." },               /* added */
   "value_weights": {                                             /* added */
@@ -63,21 +66,23 @@ Ranked shortlist. Query params (all observed):
 - `exclude_flagged` (`true`/`false`)
 - `exclude_no_merit` (`true`/`false`) — **added**, defaults `false`
 
-Each college row has these 25 fields:
+Each college row has these 27 fields:
 ```
 RANK, UNITID, INSTNM, STABBR, CONTROL_LABEL,
 COA, COA_COMPLETE, TUITION2, IGRNT_A, NET_PRICE_MID, DISCOUNT,
 ADMISSIONS_RATE, GRAD_RATE, SATVR75, SATMT75, SAT_TOTAL_75,
 AID_SHARE, VALUE_SCORE, COMPONENTS_USED, RISK_FLAGS, DATA_GAPS,
-MERIT_POLICY, MGI, NET_PRICE_RATIO, COMPOSITE_LEGACY
+MERIT_POLICY, MERIT_POLICY_YEAR, MERIT_POLICY_STATUS,
+MGI, NET_PRICE_RATIO, COMPOSITE_LEGACY
 ```
 
-> **Changed 2026-10-28** — this reconstruction returns **25** fields, not the 23
-> observed on the reference app. `DATA_GAPS` and `MERIT_POLICY` are new and
-> `RISK_FLAGS` has narrowed; see the notes below. Both additions are
+> **Changed 2026-10-28, extended 2026-11-17** — this reconstruction returns **27**
+> fields, not the 23 observed on the reference app. `DATA_GAPS` and `MERIT_POLICY`
+> were added first; `MERIT_POLICY_YEAR` and `MERIT_POLICY_STATUS` followed in Phase 4.
+> `RISK_FLAGS` has narrowed; see the notes below. All four additions are
 > backward-compatible: nothing was renamed or removed, so a client reading the
 > original 23 is unaffected. `test_api_row_schema_is_additive_only` asserts the
-> original 23 remain a subset.
+> original 23 remain a subset and pins the field count at 27.
 Notes:
 - `VALUE_SCORE` (0–100) = mean of 3 percentile ranks: affordability, grad rate, aid
   generosity. A college missing any component has **no** Value Score and is excluded
@@ -93,11 +98,23 @@ Notes:
   `no_admit_rate`. Neither feeds Value Score, so neither ever removes a college from
   the ranking. They previously lived in `RISK_FLAGS`, which meant the default view
   discarded most of the dataset over fields with no bearing on the result.
-- `MERIT_POLICY` = `need_only` for institutions on a curated list that publicly award
-  no merit scholarships, `unknown` otherwise. **`unknown` means unchecked, never
-  "awards merit aid"** — the list covers 26 of 1,907 colleges. It is a fact about the
-  institution rather than a property of our data, so it is in neither flag column and
-  affects no score; `exclude_no_merit` is the only thing that reads it.
+- `MERIT_POLICY` = `need_only`, `awards_merit` or `unknown`, read from that
+  institution's own Common Data Set section H2A line n. **`unknown` means unchecked,
+  never "awards merit aid" and never "awards none"** — it is 1,883 of 1,907 colleges.
+  It is a fact about the institution rather than a property of our data, so it is in
+  neither flag column and affects no score; `exclude_no_merit` is the only thing that
+  reads it, and it drops `need_only` only.
+- `MERIT_POLICY_YEAR` *(added 2026-11-17)* = the CDS edition the verdict came from,
+  e.g. `"2025-26"`; `""` when there is no verdict. The year is load-bearing, not
+  decoration: Yale answers line n 6/28/1, 6/24/0 and 0/0/0 in three consecutive
+  editions. A verdict more than `coverage.stale_after_editions` behind
+  `coverage.current_edition` expires back to `unknown` on its own.
+- `MERIT_POLICY_STATUS` *(added 2026-11-17)* = `resolved` (24),
+  `attempted_unresolved` (32) or `not_checked` (1,851). Splits the two causes of
+  `unknown` — we read the college's CDS and H2A was not readable, versus nobody
+  looked. Both are still `unknown` as a policy; the status never upgrades to an
+  answer. Clients should render them differently, because one dash for both is how a
+  coverage gap starts reading as a finding.
 
 ### `GET /api/merit-policy`  *(added)*
 Every CDS-verified record with its provenance, plus the institutions the check could
@@ -113,10 +130,13 @@ completeness.
     "checked_on": "2026-11-17", "method": "parsed+read"
   }],
   "unresolved": [{ "unitid": 217156, "name": "Brown University", "reason": "CDS download 404" }],
-  "coverage": { "verified": 9, "need_only": 4, "awards_merit": 5,
-                "attempted": 26, "unresolved": 17,
+  "coverage": { "verified": 24, "need_only": 5, "awards_merit": 19,
+                "attempted": 56, "unresolved": 32, "stale": 0,
                 "checked_on": "2026-11-17",
-                "source": "Common Data Set section H2A, line n" },
+                "current_edition": "2025-26", "stale_after_editions": 2,
+                "source": "Common Data Set section H2A, line n",
+                "scope": "the default top 50 shortlist, attempted in full; ...",
+                "sector_caveat": "96% private against 57.4% of the dataset; ..." },
   "status": "cds_sourced",
   "note": "..."
 }
@@ -125,6 +145,15 @@ completeness.
 from a hand-compiled roster. That roster was wrong for 5 of its 26 entries, so it was
 replaced by per-institution CDS sourcing. `policy` is `need_only`, `awards_merit` or
 (by absence) `unknown` — see `FORMULAS.md` §4.
+
+**Read `coverage.verified` against `coverage.attempted`, never against
+`colleges_in_dataset`.** The two figures mean different things and only the pair is
+honest: attempted is what we committed to, resolved is what the institutions actually
+published. Sourcing was scoped to the default top 50 and attempted in full there — 50
+of 50 attempted, 23 resolved — because a full-dataset crawl measured ~38% end-to-end
+and was rejected. `coverage.scope` and `coverage.sector_caveat` carry that context
+through the API so a client cannot report the rate without it: the top 50 is 96%
+private nonprofit against 57.4% of the dataset.
 
 ### `GET /api/education/distributions`  *(added)*
 Reference distributions for the education section, ~8 KB. Lets the browser re-score a

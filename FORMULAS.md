@@ -175,11 +175,27 @@ benefits*. Three values:
 
 | value | meaning |
 |---|---|
-| `need_only` | H2A line n reported **0** for the year shown |
+| `need_only` | H2A line n reported **0** for the edition shown |
 | `awards_merit` | H2A line n reported **more than 0** |
-| `unknown` | **unchecked** — 1,898 of 1,907 colleges |
+| `unknown` | **unchecked**, or checked and unreadable — 1,883 of 1,907 colleges |
 
-Scope limits, both real:
+`MERIT_POLICY_STATUS` splits that last row, because `unknown` has two causes that must
+not read alike:
+
+| status | meaning | count |
+|---|---|---|
+| `resolved` | H2A line n read from the institution's own CDS | 24 |
+| `attempted_unresolved` | we went looking and could not read it | 32 |
+| `not_checked` | nobody has looked | 1,851 |
+
+Both of the last two are `unknown` as a policy. The status says how hard we tried; it
+never upgrades to an answer. The distinction exists because a bare dash on a college
+whose CDS we *did* read invites being read as a finding.
+
+`MERIT_POLICY_YEAR` carries the CDS edition behind a verdict onto the row, so a label
+can name its own year. It is `""` when there is no verdict.
+
+Scope limits, all real:
 
 - **Academic merit only.** Athletic awards are excluded by the CDS question itself, so
   a `need_only` college can still fund athletes — Stanford reports 547 athletic awards
@@ -187,10 +203,46 @@ Scope limits, both real:
 - **No-need students only.** Merit money layered on top of a need award is invisible to
   H2A, so `need_only` means "reported zero on that line", not "no student ever received
   a dollar for merit".
+- **The shortlist, not the dataset.** Sourcing was scoped to the default top 50 — the
+  rows a user actually sees — and attempted in full there: **50 of 50 attempted, 23
+  resolved (46%)**. Dataset-wide the roster is 24 resolved of 56 attempted. A
+  1,907-college crawl was measured at ~38% end-to-end on the 26 best-documented
+  institutions in American higher education and **rejected on that evidence**, with
+  independent corroboration from a third-party archive finding no public CDS for 1,464
+  of 3,000 institutions.
+- **The coverage rate describes a skewed slice.** The top 50 is 48 private nonprofits
+  and 2 publics — 96% private against **57.4%** (1,095 of 1,907) across the dataset —
+  and is drawn from its most selective, best-endowed end. Within the slice 21 of 48
+  privates and both publics resolved, so the 2-college public sample supports no claim
+  either way about sector; the skew to report is the *composition* of the slice. Report
+  this wherever the rate appears: `coverage()["sector_caveat"]` carries it through the
+  API for exactly that reason.
 
-Every record carries its source URL, CDS year, the figures read, and the date checked.
-The year matters: **Yale** reports 6/28/1 in 2023-24, 6/24/0 in 2024-25 and 0/0/0 in
-2025-26. A policy claim without a year attached is not a fact.
+**A verdict is point-in-time, and expires.** `CURRENT_EDITION = "2025-26"` with
+`STALE_AFTER_EDITIONS = 2`: a record more than two editions behind the current one stops
+being reported and reverts to `unknown` with no edit to the record. The window is two
+rather than zero so a late filer does not flicker to `unknown` for a few months, and
+rather than unbounded so no verdict older than three years is ever shown.
+
+The year matters because the answer moves: **Yale** reports 6/28/1 in 2023-24, 6/24/0 in
+2024-25 and 0/0/0 in 2025-26. A policy claim without a year attached is not a fact, and
+a claim from an old edition is not evidence about today. This is the rule that was first
+applied by hand to **Colby**, whose only published CDS is 2019-20.
+
+**Evidence must match the verdict.** `need_only` requires a reported figure, not a
+refusal to answer. MIT was originally recorded as `need_only` citing line n = `N/App`
+from its 2024-25 edition — not-applicable is a non-answer, and it could not carry the
+claim. Both editions were then read directly: 2024-25 does answer line n `N/App`, while
+**2025-26 reports an actual `0 / 0 / 0`**. The record cites 2025-26.
+`test_no_verdict_rests_on_a_non_answer` now rejects `N/App`, `NA`, `n/a` and blanks in
+the `line_n` field across the whole roster.
+
+Every record carries its source URL, CDS edition, the figures read, the date checked and
+the extraction method. Three document shapes had to be handled, and the second is why
+several institutions read as empty: a flat PDF with a text layer; a **fillable PDF**,
+where the values live in AcroForm fields (`FRSH_FT_NN_GIFT_N`, `UG_FT_NN_GIFT_N`) and
+are invisible to text extraction — Carleton, Davidson, Wake Forest were all read this
+way; and a workbook, where H2A sits in coded rows (Vanderbilt, `H.2A01`–`H.2A06`).
 
 **`MGI` is a misnomer inherited from the original brief.** `IGRNT_A` conflates
 need-based and merit aid and IPEDS publishes no split, so nothing user-facing calls it

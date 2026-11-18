@@ -31,9 +31,12 @@ const METRICS = [
 // Which side wins, or null when neither does / either value is missing.
 // Three states, and the third is not a negative finding. "Not checked" has to read
 // as absence of information, because that is what it is for all but a handful.
-function meritLabel(v) {
-  if (v === 'need_only') return 'No merit aid (CDS H2A)';
-  if (v === 'awards_merit') return 'Awards merit aid (CDS H2A)';
+function meritLabel(r) {
+  if (!r) return 'Not checked';
+  const yr = r.MERIT_POLICY_YEAR ? ` — CDS ${r.MERIT_POLICY_YEAR}` : '';
+  if (r.MERIT_POLICY === 'need_only') return `No merit aid${yr}`;
+  if (r.MERIT_POLICY === 'awards_merit') return `Awards merit aid${yr}`;
+  if (r.MERIT_POLICY_STATUS === 'attempted_unresolved') return 'Checked — not published';
   return 'Not checked';
 }
 
@@ -110,12 +113,12 @@ export default function Compare({ rows, dist }) {
               );
             })}
             <tr>
-              <td className="cmp-v">{meritLabel(A.MERIT_POLICY)}</td>
+              <td className="cmp-v">{meritLabel(A)}</td>
               <th>
                 <span className="cmp-term">Merit aid</span>
-                <em className="cmp-note">from a curated list, not from IPEDS</em>
+                <em className="cmp-note">from each college's own Common Data Set, H2A line n — not from IPEDS</em>
               </th>
-              <td className="cmp-v">{meritLabel(B.MERIT_POLICY)}</td>
+              <td className="cmp-v">{meritLabel(B)}</td>
             </tr>
           </tbody>
         </table>

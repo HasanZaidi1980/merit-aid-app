@@ -188,6 +188,17 @@ table.cmp td.cmp-v.win { color: var(--green); font-weight: 800; background: #f0f
 .tag-merit { display: inline-block; padding: 1px 7px; font-size: 10.5px; font-weight: 700;
   color: #14532d; background: #dcfce7; border: 1px solid #bbf7d0; border-radius: 999px; }
 
+/* The CDS edition, riding inside the label. Lighter and lower-contrast than the
+   label itself so it reads as a qualifier rather than competing with the verdict --
+   but present, because a policy claim without a year is not a fact. */
+.tag-yr { font-weight: 600; opacity: 0.72; font-variant-numeric: tabular-nums; }
+
+/* "Checked, not published" -- deliberately grey, not amber. It is an absence of
+   information about the college, not a problem with the college, and colouring it
+   like a warning would make our own coverage gap look like its failing. */
+.tag-unres { display: inline-block; padding: 1px 7px; font-size: 10.5px; font-weight: 600;
+  color: #475569; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 999px; }
+
 /* --- Trade-offs parallel-coordinates + its legend --- */
 .to-wrap { display: grid; grid-template-columns: 1fr 184px; gap: 14px; align-items: start; }
 .to-plot { min-width: 0; }   /* lets the plot shrink inside the grid track */

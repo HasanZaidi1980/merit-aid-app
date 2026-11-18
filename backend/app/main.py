@@ -10,14 +10,16 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
 
-# Fields returned per college — the observed 23-field schema plus DATA_GAPS and
-# MERIT_POLICY. Both are additive; nothing from the original contract was removed.
+# Fields returned per college — the observed 23-field schema plus DATA_GAPS,
+# MERIT_POLICY and (Phase 4) MERIT_POLICY_YEAR / MERIT_POLICY_STATUS. All four are
+# additive; nothing from the original contract was ever renamed or removed.
 ROW_FIELDS = [
     "RANK", "UNITID", "INSTNM", "STABBR", "CONTROL_LABEL",
     "COA", "COA_COMPLETE", "TUITION2", "IGRNT_A", "NET_PRICE_MID", "DISCOUNT",
     "ADMISSIONS_RATE", "GRAD_RATE", "SATVR75", "SATMT75", "SAT_TOTAL_75",
     "AID_SHARE", "VALUE_SCORE", "COMPONENTS_USED", "RISK_FLAGS", "DATA_GAPS",
-    "MERIT_POLICY", "MGI", "NET_PRICE_RATIO", "COMPOSITE_LEGACY",
+    "MERIT_POLICY", "MERIT_POLICY_YEAR", "MERIT_POLICY_STATUS",
+    "MGI", "NET_PRICE_RATIO", "COMPOSITE_LEGACY",
 ]
 
 
@@ -72,7 +74,12 @@ def get_merit_policy():
             "reported zero for the CDS year shown -- not that no student ever "
             "received merit money, since the CDS cannot see merit aid layered on "
             "top of a need award. 'unknown' means unchecked, for the whole "
-            "dataset except the institutions listed here."
+            "dataset except the institutions listed here. Sourcing was scoped to "
+            "the default top 50 shortlist and attempted in full there: 23 of 50 "
+            "resolved. A full-dataset crawl was measured at roughly 38% and "
+            "rejected rather than built -- see coverage.scope and "
+            "coverage.sector_caveat, and read coverage.verified against "
+            "coverage.attempted, not against the dataset size."
         ),
     }
 

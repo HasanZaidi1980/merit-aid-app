@@ -28,8 +28,8 @@ owning doc when a fact changes.
 | Frontend | ✅ Working | 5 charts, sortable table, CSV export, education section. RAG panel removed. |
 | RAG / AI | 🗑️ **Removed 2026-11-17** | It ran on fabricated data. `IC2022Mission.csv` was sample-generator output sitting among the real IPEDS files; IPEDS has published no mission file since 2007. |
 | Scoring logic | ✅ Validated on real data | 10 issues resolved + tested; **none open** (see `PROJECT_BRIEF.md` §6). Formulas in `FORMULAS.md`. |
-| Merit vs need-based aid | ⚠️ CDS-sourced for 9 of 1,907 | The 26-college hand roster was **wrong for 5 of them**; now read from each college's own CDS H2A with provenance. A full crawl is not viable — see Phase 4. |
-| Tests | ⚠️ Partial | 33 tests over scoring, flags, net-price coalescing, COA basis, rate scales, weights and merit policy. No endpoint tests. |
+| Merit vs need-based aid | ✅ CDS-sourced across the shortlist | The 26-college hand roster was **wrong for 5 of them**; now read from each college's own CDS H2A with provenance, a year, and an expiry. **Default top 50: 50 attempted, 23 resolved**; 24 of 1,907 dataset-wide. A full crawl was measured at ~38% and rejected — see Phase 4. |
+| Tests | ⚠️ Partial | 40 tests over scoring, flags, net-price coalescing, COA basis, rate scales, weights, merit policy, the year on the row and verdict staleness. No endpoint tests. |
 | **Real data** | ✅ **Installed & validated** | Real IPEDS 2022-23: 1,907 colleges (726 public / 1,095 private nonprofit / 86 for-profit). 5 of 5 reference metrics match. |
 | Error handling | ⚠️ Partial | `/api/meta` failure now shows a real error with a retry. `getColleges` and the empty state are still silent. |
 | Deployment | ❌ Not started | Terraform + K8s manifests exist, never applied. |
@@ -37,9 +37,9 @@ owning doc when a fact changes.
 **One-line summary:** the app runs on real, validated IPEDS data and produces defensible
 rankings — Stanford #1 at $77,662 sticker against a $7,332 net price for a mid-income
 family, which is exactly the thesis. The numbers are right; the word "merit" on them was
-not, and is now corrected in the UI rather than in the data (Phase 4). What remains is
-the COA question, a UI that still fails silently on `getColleges`, and a RAG panel with
-no real data source.
+not, and is now corrected in the UI and sourced per-institution from each college's own
+Common Data Set (Phase 4). What remains is
+a UI that still fails silently on `getColleges`, and the deploy.
 
 ---
 
@@ -49,14 +49,14 @@ Confirmed by running it, not by reading it:
 
 - `docker compose up --build` builds both images and serves on :8080.
 - Direct run works: uvicorn on :8000, Vite on :5173 with the `/api` proxy.
-- `/api/health`, `/api/meta`, `/api/colleges`, `/api/rag/status`, `/api/rag/query` all
-  return 200 with the expected shapes. Rows carry 24 fields including `DATA_GAPS`.
-- RAG answers end-to-end against a live `ANTHROPIC_API_KEY` using `claude-sonnet-5`,
-  correctly citing colleges by mission theme.
+- `/api/health`, `/api/meta`, `/api/colleges`, `/api/merit-policy` and
+  `/api/education/distributions` all return 200 with the expected shapes. Rows carry
+  **27** fields. `/api/rag/*` returns **404** — removed in Phase 3.5; there are 5
+  endpoints, not 7.
 - The flag split behaves as designed. Against a fixture with realistic missingness,
   **11 of the top 20 colleges were missing SAT data and were correctly kept** — under
   the previous `RISK_FLAGS` behaviour all 11 would have been silently dropped.
-- `pytest` — 8 passing, no data files required.
+- `pytest` — 40 passing.
 - Frontend builds clean (`npm run build`).
 
 ## 3. What is unverified or missing
@@ -64,15 +64,15 @@ Confirmed by running it, not by reading it:
 1. **Everything data-dependent.** Sample data has no missing values, no outliers, and
    its net price is constructed from the same components the app sums into `COA` — so
    it is circular with the formula it is meant to test.
-2. **Four open scoring questions** — COA vs net price comparability, the percent-scaling
-   heuristic, whether equal weighting is defensible, and non-configurable weights.
-   `PROJECT_BRIEF.md` §6 Still open is authoritative.
+2. ~~**Four open scoring questions**~~ — all four closed in Phase 3: COA is
+   reconstructed from the identity IPEDS nets against, rate scaling is declared per
+   column rather than guessed, equal weighting was tested and kept with its
+   influence measured, and weights are configurable via `VALUE_WEIGHTS`.
 3. **No error state anywhere in the UI.** `getMeta()` has no `.catch()`; a failed call
    leaves `meta` null and the page renders "Loading…" forever.
-4. **RAG runs on TF-IDF.** `sentence-transformers` is commented out of
-   `requirements.txt`, so retrieval is lexical. A question sharing no vocabulary with
-   the missions returns "No relevant mission statements found" even when relevant
-   colleges exist.
+4. ~~**RAG runs on TF-IDF.**~~ Moot — the whole feature was removed in Phase 3.5.
+   `IC2022Mission.csv` was sample-generator output, and IPEDS has published no
+   mission file since 2007 (`IC2022Mission.zip` → 404, `IC2007Mission.zip` → 200).
 5. **Thin test coverage.** Nothing covers `data.py` (load, merge, clean, sentinels) or
    the endpoints.
 6. **Deployment never exercised.** See §6 for the 502 hypothesis that should be fixed
@@ -237,9 +237,11 @@ Deleted locally: the synthetic CSV and `backend/index/`.
 **If a real source is ever wanted**, the measured facts are in the table above — the
 2007 file exists and reaches 36.2%. That is a decision someone can now make informed.
 
-### Phase 4 — Split merit aid from need-based aid (Common Data Set) ⚠️ *scoped down 2026-11-17*
+### Phase 4 — Split merit aid from need-based aid (Common Data Set) ✅ *closed 2026-11-17*
 
-**This is the app's central unfinished business.** It is deferred, not dropped.
+**Closed on evidence, not abandoned.** Full-dataset CDS coverage was evaluated,
+measured and rejected with figures; the shortlist a user actually sees was then
+attempted in full. What is not possible is recorded as not possible.
 
 **The problem.** `IGRNT_A` is total institutional grant aid — need-based and merit
 combined. All 663 columns of `SFA2122` were searched and nothing splits them; NCES
@@ -274,9 +276,18 @@ institutional-research page.
       | Middlebury | 2024-25 | 3 / 8 / 0 | $2,700 / $3,850 |
       | Amherst | 2024-25 | 0 / 6 / 0 | $14,801 |
 
-      Four confirmed zero — Colgate (2024-25), Haverford (2025-26), MIT (2024-25,
-      reports `N/App`) and Yale (2025-26). **Seventeen could not be verified at all**
-      and are now `unknown`, which is what that value has always claimed to mean.
+      Four confirmed zero — Colgate (2024-25), Haverford (2025-26), MIT and Yale
+      (both 2025-26). **Seventeen could not be verified at all** and are now
+      `unknown`, which is what that value has always claimed to mean.
+
+      **MIT's evidence was corrected afterwards.** Its record first cited line n =
+      `N/App` from the 2024-25 edition. Not-applicable is a non-answer, not a
+      reported zero, so it could not carry the verdict — the same gap in reasoning
+      that produced the five false labels above. Verified directly against both
+      editions: MIT's 2024-25 CDS does answer line n `N/App`, while its **2025-26
+      edition reports an actual `0 / 0 / 0`**. The record now cites 2025-26, and
+      `test_no_verdict_rests_on_a_non_answer` rejects `N/App`, `NA` and blanks in
+      the `line_n` field across the whole roster.
 
       `merit_policy.py` was rewritten around verified records with provenance: source
       URL, CDS year, the figures read, date and method. A third value `awards_merit`
@@ -319,19 +330,86 @@ institutional-research page.
 
 - [x] **Modelled the result honestly.** `need_only` / `awards_merit` / `unknown`, with
       `coverage()` reported through `/api/meta` and `/api/merit-policy` so the UI
-      states 9 of 1,907 rather than implying completeness.
+      states resolved / attempted / total rather than implying completeness.
 
-- [ ] **A real merit metric remains impossible** for all but those 9. Until the split
-      exists for an institution, no "merit" number is computed from `IGRNT_A` under any
-      weighting — there is no arithmetic that recovers it.
+- [x] **Rescoped from the dataset to the shortlist, and finished it there**
+      *(2026-11-17)*. Coverage of 9 of 1,907 was not a finished phase either: the
+      default top 20 had 4 resolved and 16 unknown. So the target became **every
+      institution in the default top 50 attempted**, with its outcome and provenance
+      recorded. All 50 were attempted; **23 resolved, 27 unresolved.**
 
-**Done when:** `MERIT_POLICY` is sourced from CDS H2A for a stated, measured share of
-the dataset — and the UI reports that share. **Met**, at 9 of 1,907, with the share
-reported rather than implied.
+      | scope | attempted | resolved | need_only | awards_merit |
+      |---|---|---|---|---|
+      | default top 20 | 20 / 20 | **10** (was 4) | 2 | 8 |
+      | default top 50 | 50 / 50 | **23** | 5 | 18 |
+      | whole dataset | 56 | 24 | 5 | 19 |
+
+      Resolution ran at **46%** on the top 50, above the 38% the calibration
+      predicted. Fifteen new institutions resolved and fourteen of them award merit
+      aid — including **Washington and Lee at rank 3**, which was `unknown` and
+      reports 29 / 132 / 0 at an average of **$62,110** for a first-year recipient,
+      the largest per-recipient award in the roster. Only Carleton reported zero.
+
+      The fifteen that did not resolve failed for reasons worth recording, because
+      they are the shape of the problem and not bad luck: a 403 that refuses
+      non-browser clients (Johns Hopkins), a CDS published only inside an
+      authenticated SharePoint folder (Wesleyan), a Box share whose direct download
+      403s (Soka), an H2A table absent from the PDF text layer (Augustana), an
+      institution that publishes IPEDS figures *instead of* a CDS and says so
+      (Cleveland Institute of Music), a college that closed in 2023 (Holy Names),
+      and nine small or specialised institutions that publish no CDS at all.
+
+- [x] **Verdicts now expire instead of ageing into claims.** `CURRENT_EDITION` and
+      `STALE_AFTER_EDITIONS = 2` mean a record more than two editions behind the
+      current one stops being reported and reverts to `unknown` with no edit. This
+      makes a rule out of the instinct already applied by hand to Colby, whose only
+      published CDS is 2019-20. Nothing can quietly become a stale assertion.
+
+- [x] **The year reaches the row, and the two kinds of blank are separated.**
+      `MERIT_POLICY_YEAR` and `MERIT_POLICY_STATUS` are additive row fields. The UI
+      previously claimed "each label names the year it came from" while rendering no
+      year at all, because `cds_year` never left `merit_policy.py` — a label
+      overstating what it displays, which is the same class of error as calling
+      `IGRNT_A` "merit". `MERIT_POLICY_STATUS` splits *checked, not published* from
+      *never checked*; both are `unknown` as a policy, and neither is ever a finding.
+
+- [ ] **A real merit metric remains impossible** for all but the 24 resolved. Until
+      the split exists for an institution, no "merit" number is computed from
+      `IGRNT_A` under any weighting — there is no arithmetic that recovers it.
+      Unchanged by this phase and not expected to change.
+
+**Done when** *(redefined 2026-11-17)*: **every institution in the default top 50 has
+been attempted, with its outcome and provenance recorded, and the UI reports resolved
+/ attempted / total.** **Met** — 50 of 50 attempted, 23 resolved.
+
+**Why "Done when" was redefined, recorded so it is a decision and not a lowered bar:**
+the previous wording ("a stated, measured share of the dataset") could be satisfied by
+any number at all, including 9, which is how a phase stays technically met while the
+thing a user sees stays blank. The replacement is the strongest guarantee that is
+actually ours to give. We control whether we *attempt* an institution; we do not
+control whether it published a readable CDS, and at a measured 38–46% hit rate a
+resolved-coverage target would have been a promise about other people's websites.
+Reporting both numbers is the honest form of that: attempted is a commitment, resolved
+is an outcome.
+
+**Coverage statistics here flatter the dataset, and that is stated wherever they
+appear** (`coverage()["sector_caveat"]`, the UI footer, `FORMULAS.md` §4). The top 50
+is 48 private nonprofits and 2 publics — 96% private against **57.4%** (1,095 of
+1,907) across the whole dataset — and is drawn from its most selective, best-endowed
+end. Within the slice, 21 of 48 privates and both publics resolved; a 2-college public
+sample supports no claim either way about sector, so the skew to report is the
+*composition* of the slice, not a measured sector difference. The external evidence is
+what bears on the full dataset: an independent archive finds no public CDS for 1,464 of
+3,000 institutions, which points to the full-dataset rate being worse than 46%.
 
 **Why the scope changed:** the phase assumed the ceiling was effort. It is not — it is
 publication. Roughly half of institutions do not publish a findable CDS at all, and a
 meaningful share of those that do publish it in a form no parser can read.
+**Full-dataset CDS coverage is therefore rejected on measured evidence, not deferred:**
+38% end-to-end on the 26 best-documented institutions in American higher education,
+~80 minutes for those 26 with source URLs already in hand, and independent
+corroboration at 49% with no public CDS. A 1,907-college crawler would land near
+20–35%, skewed to wealthy privates. It was not built, and should not be.
 
 ### Phase 5 — Harden the app for a real user
 

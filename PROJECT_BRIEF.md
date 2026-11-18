@@ -224,11 +224,11 @@ In practice `no_grad_rate` can never appear on a *returned* row, because step 2 
 **What was done** (2026-10-28):
 
 1. **Relabelled honestly.** Every user-facing "merit" claim on a generosity metric is gone. The sidebar filter reads "Grant ÷ Tuition ≥ median"; `/api/meta` carries `metric_notes` so the correction travels with the data; a disclosure panel sits above the charts. The wire field stays `MGI` for contract compatibility.
-2. **Curated need-only list** — `backend/app/merit_policy.py`, 26 institutions that publicly award no merit scholarships, keyed on UNITID. Adds `MERIT_POLICY` (`need_only` / `unknown`) and the opt-in `exclude_no_merit` filter.
+2. **Per-institution CDS sourcing** — `backend/app/merit_policy.py`, keyed on UNITID. Adds `MERIT_POLICY` (`need_only` / `awards_merit` / `unknown`), `MERIT_POLICY_YEAR`, `MERIT_POLICY_STATUS` and the opt-in `exclude_no_merit` filter. This began as a hand-compiled list of 26 institutions "that publicly award no merit scholarships"; reading all 26 against their own CDS H2A line n proved **5 of them wrong**, Stanford at rank 1 among them, so the list was replaced by verified records with provenance.
 
 **The invariants** (pinned by `backend/tests/test_merit_policy.py`):
 
-- **`unknown` is not a claim.** It means *unchecked*. The column is a string rather than a bool precisely so there is no value that could be read as "offers merit aid" — 26 of 1,907 have been checked, and a `False` on the other 1,881 would convert a known gap into an invented answer.
+- **`unknown` is not a claim.** It means *unchecked*, or checked and unreadable. The column is a string rather than a bool precisely so there is no value that could be read as "offers merit aid" — 24 of 1,907 are resolved and a `False` on the other 1,883 would convert a known gap into an invented answer. `MERIT_POLICY_STATUS` separates the 32 we attempted and could not read from the 1,851 nobody has looked at.
 - **The flag touches no score.** It is a fact about the college, not a measurement of it, so it belongs in neither `RISK_FLAGS` nor `DATA_GAPS` and never moves a ranking.
 - **The filter is opt-in.** Defaulting it on would imply the other 1,881 colleges had been checked and cleared.
 
@@ -316,7 +316,8 @@ Two items are tracked elsewhere and are **not** scoring questions:
 
 - Splitting merit aid from need-based aid — `PROJECT_STATE.md` Phase 4, deferred by
   decision. `IGRNT_A` conflates them and IPEDS publishes no split.
-- Merit-aid sourcing — `PROJECT_STATE.md` Phase 4. Now CDS-sourced for 9 of 1,907 with
+- Merit-aid sourcing — `PROJECT_STATE.md` Phase 4, closed 2026-11-17. CDS-sourced
+  across the default top 50 (50 attempted, 23 resolved); 24 of 1,907 dataset-wide, with
   provenance; a full crawl was measured and recommended against (38% end-to-end success
   on the 26 best-documented institutions in the country).
 
