@@ -14,14 +14,8 @@ spec:
           env:
             - name: DATA_DIR
               value: /data
-            - name: INDEX_DIR
-              value: /index
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef: { name: anthropic, key: api-key }
           volumeMounts:
             - { name: data, mountPath: /data }
-            - { name: index, mountPath: /index }
           readinessProbe:
             httpGet: { path: /api/health, port: 8000 }
             initialDelaySeconds: 10
@@ -34,8 +28,6 @@ spec:
       volumes:
         - name: data
           emptyDir: {}          # or a CSI volume synced from the GCS bucket
-        - name: index
-          persistentVolumeClaim: { claimName: index-pvc }
 ---
 apiVersion: v1
 kind: Service
@@ -43,10 +35,4 @@ metadata: { name: backend }
 spec:
   selector: { app: backend }
   ports: [{ port: 8000, targetPort: 8000 }]
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata: { name: index-pvc }
-spec:
-  accessModes: [ReadWriteOnce]
-  resources: { requests: { storage: 2Gi } }
+

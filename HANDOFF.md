@@ -8,11 +8,11 @@ For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next f
 
 - **On real IPEDS 2022-23 data.** 1,907 colleges. Validated against the reference
   app's published numbers — 4 of 5 match exactly; the fifth is explained (see below).
-- **In git and on GitHub.** `main` @ `ec37a8a`, pushed to
+- **In git and on GitHub.** `main` pushed to
   github.com/HasanZaidi1980/merit-aid-app.
 - **Works locally.** Docker (`docker compose up --build` → http://localhost:8080) and
   direct (uvicorn :8000 + vite :5173).
-- **29 tests pass.** `cd backend && pytest` — in-memory fixtures, no data files needed.
+- **33 tests pass.** `cd backend && pytest` — in-memory fixtures, no data files needed.
 - **Not deployed to GCP.** Nothing pushed to GKE/Artifact Registry. `DEPLOYMENT.md` has
   the steps; they have not been run. The manifests contain a known bug — see
   `PROJECT_STATE.md` Phase 8.
@@ -68,11 +68,12 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
 - **Unverified — audit these:**
   - **Percentage-scaling heuristic** for admit/grad rates (`max > 1.5` is fragile).
   - **Equal 1/3 weighting** in Value Score is an assertion, not a finding.
-  - **The curated need-only list** (26 colleges) is provisional — compiled from published
-    institutional policy, not yet checked against each school's Common Data Set.
+  - ~~The curated need-only list is provisional~~ — **checked 2026-11-17 and 5 of its
+    26 entries were wrong.** Now CDS-sourced with provenance for 9 institutions;
+    the other 17 are `unknown`. A full crawl was measured and recommended against.
   - Reference app showed intermittent **502s** on `/api/*` — reproduce under load.
-- **29 tests** cover scoring, the flag split, net-price coalescing, merit policy, the
-  COA basis, declared rate scales and the Value Score weights.
+- **33 tests** cover scoring, the flag split, net-price coalescing, merit policy and
+  its provenance, the COA basis, declared rate scales and the Value Score weights.
   No endpoint tests yet.
 
 ## Data
@@ -94,14 +95,18 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
 **See `PROJECT_STATE.md`** — it owns the roadmap, phase by phase, with a "done when"
 for each. Don't keep a second list here; it drifts.
 
-Phases 1-3 are **complete**: real data loaded, validated, and the open scoring
-questions closed. Phase 4 — splitting merit aid from need-based aid via the Common
-Data Set — is **deferred by decision**, not dropped, and is the next real change.
+Phases 1-3.5 are **complete**. Phase 4 is **scoped down by measurement**: the merit
+split is CDS-sourced for 9 of 1,907 with provenance, and a 1,907-institution crawl is
+recommended against (38% end-to-end success on the 26 best-documented institutions;
+an existing third-party archive finds no public CDS for 49% of 3,000 schools).
+Phase 5 (error states, empty state) is the next real change.
 
 Recent work: Phase 3 replaced the hand-summed cost of attendance with the basket
-IPEDS itself nets against, which removed 459 impossible negative discounts; rate
-scaling became a declaration rather than a guess; and the Value Score weights became
-configurable and auditable. `FORMULAS.md` is new and holds all of it.
+IPEDS itself nets against (459 impossible negative discounts → 0); rate scaling became
+a declaration rather than a guess; Value Score weights became configurable. Then the
+**RAG panel was removed** — it ran on fabricated mission text — and the **merit-aid
+roster was corrected**, five of its 26 entries having asserted the opposite of what
+those colleges' own Common Data Sets report. `FORMULAS.md` holds the formulas.
 
 ## Guardrails
 
@@ -122,7 +127,7 @@ merit-aid-app/
   observed-api-contract.md  exact endpoints + 25-field schema
   DEPLOYMENT.md           GCP deploy + teardown
   docker-compose.yml
-  backend/   app/{config,data,scoring,merit_policy,education,rag,main}.py
+  backend/   app/{config,data,scoring,merit_policy,education,main}.py
              scripts/  tests/  requirements.txt  Dockerfile
   frontend/  src/{App.jsx,Plot.jsx,api.js,main.jsx,styles.css}
              src/education/  src/components/  nginx.conf  Dockerfile

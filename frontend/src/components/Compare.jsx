@@ -29,6 +29,14 @@ const METRICS = [
 ];
 
 // Which side wins, or null when neither does / either value is missing.
+// Three states, and the third is not a negative finding. "Not checked" has to read
+// as absence of information, because that is what it is for all but a handful.
+function meritLabel(v) {
+  if (v === 'need_only') return 'No merit aid (CDS H2A)';
+  if (v === 'awards_merit') return 'Awards merit aid (CDS H2A)';
+  return 'Not checked';
+}
+
 function winner(m, x, y) {
   if (!m.better || x == null || y == null || x === y) return null;
   const xWins = m.better === 'higher' ? x > y : x < y;
@@ -102,12 +110,12 @@ export default function Compare({ rows, dist }) {
               );
             })}
             <tr>
-              <td className="cmp-v">{A.MERIT_POLICY === 'need_only' ? 'Need-based only' : 'Not checked'}</td>
+              <td className="cmp-v">{meritLabel(A.MERIT_POLICY)}</td>
               <th>
                 <span className="cmp-term">Merit aid</span>
                 <em className="cmp-note">from a curated list, not from IPEDS</em>
               </th>
-              <td className="cmp-v">{B.MERIT_POLICY === 'need_only' ? 'Need-based only' : 'Not checked'}</td>
+              <td className="cmp-v">{meritLabel(B.MERIT_POLICY)}</td>
             </tr>
           </tbody>
         </table>

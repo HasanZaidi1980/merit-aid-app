@@ -1,10 +1,11 @@
-"""Load + clean the 8 IPEDS CSVs and merge them into one analysis table."""
+"""Load + clean the 6 IPEDS CSVs and merge them into one analysis table."""
 import os
 import functools
 import numpy as np
 import pandas as pd
 
 from . import config
+from . import merit_policy
 from . import scoring
 from .scoring import add_metrics
 
@@ -159,17 +160,6 @@ def build_dataset() -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-@functools.lru_cache(maxsize=1)
-def load_missions() -> pd.DataFrame:
-    m = _read("mission")
-    m.columns = [c.lower() for c in m.columns]
-    m = m.rename(columns={"unitid": "UNITID"})
-    text_col = "mission" if "mission" in m.columns else m.columns[-1]
-    m = m[["UNITID", text_col]].rename(columns={text_col: "mission"})
-    m = m.dropna(subset=["mission"])
-    return m.reset_index(drop=True)
-
-
 def meta() -> dict:
     df = build_dataset()
     flagged = (df["RISK_FLAGS"] != "").sum()
@@ -190,9 +180,11 @@ def meta() -> dict:
         # Colleges with no Value Score at all; excluded from every ranking.
         "unscoreable_count": int(df["VALUE_SCORE"].isna().sum()),
         "sat_coverage": int(df["SAT_TOTAL_75"].notna().sum()),
-        # Colleges on the curated need-only list that survive the pipeline. Shown so
-        # the UI can state the coverage of that list rather than imply it is complete.
+        # Colleges verified against their own CDS H2A. Shown so the UI can state how
+        # far the sourcing got rather than imply the dataset has been covered.
         "no_merit_aid_count": int((df["MERIT_POLICY"] == "need_only").sum()),
+        "awards_merit_count": int((df["MERIT_POLICY"] == "awards_merit").sum()),
+        "merit_policy_coverage": merit_policy.coverage(),
         # What the generosity metrics actually measure. Surfaced through the API so
         # the correction travels with the data instead of living only in UI copy.
         "metric_notes": {
@@ -210,9 +202,11 @@ def meta() -> dict:
                 "identically that published grant figure."
             ),
             "merit_policy": (
-                "MERIT_POLICY is 'need_only' for colleges on a curated list of "
-                "institutions that publicly award no merit scholarships, and "
-                "'unknown' otherwise. Unknown means unchecked."
+                "MERIT_POLICY is sourced from each college's own Common Data Set "
+                "section H2A line n. 'need_only' = that line reported zero for the "
+                "year checked; 'awards_merit' = it reported more than zero; "
+                "'unknown' = unchecked, which is almost the whole dataset. It covers "
+                "academic merit only -- athletic awards are excluded by H2A itself."
             ),
         },
         # The Value Score weighting actually in force, normalised. Reported so the

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import Plot from './Plot.jsx';
-import { getMeta, getColleges, getRagStatus, getDistributions, askRag } from './api.js';
+import { getMeta, getColleges, getDistributions } from './api.js';
 import { COLUMN_TERMS } from './education/glossary.js';
 import { fmt$, num, pct } from './education/format.js';
 import Explain from './components/Explain.jsx';
@@ -25,16 +25,11 @@ export default function App() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sort, setSort] = useState({ key: 'RANK', dir: 1 });
-  const [rag, setRag] = useState({ ready: false });
-  const [q, setQ] = useState('');
-  const [answer, setAnswer] = useState(null);
-  const [asking, setAsking] = useState(false);
 
   useEffect(() => {
     // Without the catch, a backend that is down leaves `meta` null forever and the
     // whole app sits on "Loading…" with nothing to explain why.
     getMeta().then(setMeta).catch((e) => setMetaError(String(e.message || e)));
-    getRagStatus().then((s) => setRag(s)).catch(() => {});
     // Education distributions are optional: if this fails the ranking still works,
     // so the education section hides itself rather than breaking the page.
     getDistributions().then(setDist).catch(() => {});
@@ -71,18 +66,6 @@ export default function App() {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     a.download = 'merit_aid_rankings.csv'; a.click();
-  }
-
-  async function ask(question) {
-    const text = question ?? q;
-    if (!text) return;
-    setAsking(true); setAnswer(null);
-    try {
-      const unitids = rows.map((r) => r.UNITID);
-      const res = await askRag(text, unitids, names);
-      setAnswer(res);
-    } catch (e) { setAnswer({ answer: 'Request failed: ' + e.message, sources: [] }); }
-    setAsking(false);
   }
 
   // ---- chart builders (each respects the dimension toggles) ----
@@ -153,11 +136,17 @@ export default function App() {
     if (['ADMISSIONS_RATE', 'GRAD_RATE', 'AID_SHARE'].includes(k)) return pct(r[k]);
     if (['VALUE_SCORE', 'COMPOSITE_LEGACY'].includes(k)) return num(r[k], 1);
     if (k === 'MERIT_POLICY') {
-      // Blank means unchecked, not "offers merit aid" — the dash has to read as
-      // absence of information, so only the positive finding gets a label.
-      return r[k] === 'need_only'
-        ? <span className="tag-need" title="Publicly awards need-based aid only">need-based only</span>
-        : '—';
+      // A dash means unchecked, which is almost every college. Only a value read
+      // from that college's own CDS H2A gets a label, and each label says the year
+      // it came from, because the answer changes between editions — Yale reported
+      // 24 non-need awards in 2024-25 and zero in 2025-26.
+      if (r[k] === 'need_only') {
+        return <span className="tag-need" title="Reported zero on CDS H2A line n (academic merit only; athletic awards are excluded from that line)">no merit aid</span>;
+      }
+      if (r[k] === 'awards_merit') {
+        return <span className="tag-merit" title="Reported more than zero on CDS H2A line n">awards merit</span>;
+      }
+      return '—';
     }
     if (k === 'DATA_GAPS') {
       const gaps = (r[k] || '').split(',').filter(Boolean);
@@ -219,7 +208,7 @@ export default function App() {
         <label className="toggle">
           <input type="checkbox" checked={filters.excludeNoMerit}
             onChange={() => setFilters({ ...filters, excludeNoMerit: !filters.excludeNoMerit })} />
-          Hide need-based-only
+          Hide no-merit-aid colleges
         </label>
         <p className="hint">
           Hides {meta.no_merit_aid_count} colleges on a curated list that publicly award
@@ -316,28 +305,6 @@ export default function App() {
             </div>
           </div>
 
-          <div className="card rag">
-            <h3>Ask about mission &amp; values (AI)</h3>
-            <p className="cap">Sanity-check the numbers against what each college says it stands for. Answers draw only from the mission statements of the colleges shown above. {rag.index_ready ? '' : '(index warming up)'}</p>
-            <div className="chips">
-              {['Which of these schools emphasize leadership and service?',
-                'Which colleges focus on undergraduate research?',
-                'Are any of these faith-based institutions?',
-                'Which schools talk about affordability or access?'].map((c) => (
-                <span className="chip" key={c} onClick={() => { setQ(c); ask(c); }}>{c}</span>))}
-            </div>
-            <div className="row">
-              <input type="text" value={q} placeholder="Ask a question…"
-                onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask()} />
-              <button className="btn" onClick={() => ask()} disabled={asking}>{asking ? 'Asking…' : 'Ask'}</button>
-            </div>
-            {answer && (
-              <div className="answer">
-                {answer.answer}
-                {answer.sources?.length ? <div className="src">Sources: {answer.sources.map((s) => names[s.unitid] || s.unitid).join(' · ')}</div> : null}
-              </div>
-            )}
-          </div>
         </>)}
       </main>
     </div>

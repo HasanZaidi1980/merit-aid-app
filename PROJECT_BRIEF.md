@@ -300,14 +300,25 @@ created by this phase — `CLAUDE.md` had always referenced it but it did not ex
 
 ### Still open
 
-Nothing. Every entry above is either resolved or a recorded trade-off in `FORMULAS.md`.
+Nothing in scoring. One **accepted limitation** is now recorded with its size measured
+rather than left implicit:
+
+- **`AID_SHARE` divides two different cohorts.** `IGRNT_A` is institution-only, all
+  incomes, averaged over grant recipients; the `BAND_GRANT` inside `COA` is all-source,
+  $75k–$110k, averaged over the whole Title IV band. SFA2122 publishes no variable that
+  is both institution-only *and* band-specific — all 332 were checked, and none mentions
+  need, non-need or merit. Institution-only aid exceeds all-source aid at **527 of 1,907
+  colleges (27.6%)**, which is impossible if the cohorts matched, so that is a lower
+  bound on the disagreement. Using `BAND_GRANT` instead would be cleaner but would
+  measure federal and state generosity rather than the college's own. `FORMULAS.md` §4.
 
 Two items are tracked elsewhere and are **not** scoring questions:
 
 - Splitting merit aid from need-based aid — `PROJECT_STATE.md` Phase 4, deferred by
   decision. `IGRNT_A` conflates them and IPEDS publishes no split.
-- `GOTCHAS.md` is referenced by `CLAUDE.md` but does not exist. Out of scope for
-  Phase 3; noted so it is not mistaken for a file someone deleted.
+- Merit-aid sourcing — `PROJECT_STATE.md` Phase 4. Now CDS-sourced for 9 of 1,907 with
+  provenance; a full crawl was measured and recommended against (38% end-to-end success
+  on the 26 best-documented institutions in the country).
 
 ---
 

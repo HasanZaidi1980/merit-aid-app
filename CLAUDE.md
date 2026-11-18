@@ -98,7 +98,7 @@ leave the tree in a committable state at the end of a turn.
 | `PROJECT_BRIEF.md` | Architecture, metrics, open questions. |
 | `FORMULAS.md` | Every formula, with resolved and open issues. |
 | `observed-api-contract.md` | Endpoints and the row schema. Breaking it breaks the frontend. |
-| `GOTCHAS.md` | Environment traps that have actually cost time here. |
+| `PROJECT_BRIEF.md` §9 | Environment traps that have actually cost time here (PowerShell `&&`, Python 3.13 vs 3.12, Docker). |
 | `HANDOFF.md` | Where things stand right now. |
 
 Run `cd backend && pytest` before reporting a change complete.

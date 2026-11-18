@@ -53,11 +53,4 @@ pd.DataFrame({"UNITID": unitids, "DVADM01": rng.integers(10, 95, N)}
 pd.DataFrame({"UNITID": unitids, "GBA4RTT": rng.integers(20, 95, N)}
              ).to_csv(f"{DATA}/DRVGR2022.csv", index=False)
 
-themes = ["leadership and service", "undergraduate research", "faith and community",
-          "affordability and access", "innovation and technology", "the liberal arts"]
-missions = [f"{names[i]} is dedicated to excellence in {rng.choice(themes)}, "
-            f"preparing students for lives of purpose." for i in range(N)]
-pd.DataFrame({"unitid": unitids, "mission": missions}
-             ).to_csv(f"{DATA}/IC2022Mission.csv", index=False)
-
-print(f"Wrote 7 sample files to {os.path.abspath(DATA)}")
+print(f"Wrote 6 sample files to {os.path.abspath(DATA)}")

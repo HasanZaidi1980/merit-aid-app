@@ -36,7 +36,7 @@ npm run dev                                 # http://localhost:5173 (proxies /ap
 ```bash
 cd backend
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                                      # 29 tests, no data files required
+pytest                                      # 33 tests, no data files required
 ```
 Fixtures are built in memory, not read from `backend/data/` — the sample data has no
 missing values, so it exercises none of the data-quality logic.
@@ -52,7 +52,6 @@ backend/    FastAPI app — data pipeline, scoring, RAG, API
   app/scoring.py    MGI, Aid Share, Value Score, Legacy composite  ← audit the formulas here
   app/merit_policy.py  curated need-only roster — the one thing IPEDS can't tell us
   app/education.py  percentile breakpoints + histograms for the education section
-  app/rag.py        mission-statement embeddings + retrieval + Claude answer
   app/main.py       the /api/* endpoints
   scripts/make_sample_data.py   demo dataset generator
 frontend/   React + Vite + Plotly SPA (Financial Dashboard theme)

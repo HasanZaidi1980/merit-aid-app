@@ -24,12 +24,12 @@ owning doc when a fact changes.
 |---|---|---|
 | Version control | ✅ Done | `main` pushed to GitHub. 5 commits. |
 | Runs locally | ✅ Done | Docker (`docker compose up --build`) and direct (uvicorn + vite). |
-| Backend API | ✅ Working | All 7 endpoints verified; 25-field rows. |
-| Frontend | ✅ Working | 5 charts, sortable table, CSV export, RAG panel, education section. |
-| RAG / AI | ❌ **Non-functional** | No real mission source exists (see Phase 5). Index holds sample UNITIDs; every query now returns nothing. |
-| Scoring logic | ⚠️ Validated on real data | 6 issues resolved + tested; **4 still open** (see `PROJECT_BRIEF.md` §6). COA is the one remaining unexplained gap. |
-| Merit vs need-based aid | ⚠️ Mitigated, not solved | `IGRNT_A` conflates them and IPEDS never splits them. Relabelled honestly + 26-college curated need-only list. Real fix is Phase 4. |
-| Tests | ⚠️ Partial | 17 tests over scoring, flags, net-price coalescing and merit policy. No endpoint tests. |
+| Backend API | ✅ Working | 5 endpoints, 25-field rows. The 2 RAG endpoints were removed — see below. |
+| Frontend | ✅ Working | 5 charts, sortable table, CSV export, education section. RAG panel removed. |
+| RAG / AI | 🗑️ **Removed 2026-11-17** | It ran on fabricated data. `IC2022Mission.csv` was sample-generator output sitting among the real IPEDS files; IPEDS has published no mission file since 2007. |
+| Scoring logic | ✅ Validated on real data | 10 issues resolved + tested; **none open** (see `PROJECT_BRIEF.md` §6). Formulas in `FORMULAS.md`. |
+| Merit vs need-based aid | ⚠️ CDS-sourced for 9 of 1,907 | The 26-college hand roster was **wrong for 5 of them**; now read from each college's own CDS H2A with provenance. A full crawl is not viable — see Phase 4. |
+| Tests | ⚠️ Partial | 33 tests over scoring, flags, net-price coalescing, COA basis, rate scales, weights and merit policy. No endpoint tests. |
 | **Real data** | ✅ **Installed & validated** | Real IPEDS 2022-23: 1,907 colleges (726 public / 1,095 private nonprofit / 86 for-profit). 5 of 5 reference metrics match. |
 | Error handling | ⚠️ Partial | `/api/meta` failure now shows a real error with a retry. `getColleges` and the empty state are still silent. |
 | Deployment | ❌ Not started | Terraform + K8s manifests exist, never applied. |
@@ -193,7 +193,51 @@ never existed).
 **Done:** `PROJECT_BRIEF.md` §6 Still open is empty; its four entries moved to Resolved.
 Remaining trade-offs are recorded in `FORMULAS.md` §3 rather than left implicit.
 
-### Phase 4 — Split merit aid from need-based aid (Common Data Set) ⏸ *deferred by decision, 2026-10-28*
+### Phase 3.5 — Remove the fabricated mission data ✅ *complete 2026-11-17*
+
+`backend/data/IC2022Mission.csv` was **sample-generator output** — 300 rows of
+"Sample College N is dedicated to excellence in …" keyed to synthetic UNITIDs
+(100000+) — sitting among the six real IPEDS files, with a vector index built from it
+and a user-facing "Ask about mission & values (AI)" panel reading from it.
+
+Verified against the IPEDS data center: `IC2022Mission.zip` returns **404**, as does
+`IC2008Mission.zip`; `IC2006Mission.zip` and `IC2007Mission.zip` return **200**. IPEDS
+has published no mission file since 2007. `HD2022` has no mission column either.
+
+**Decision: remove the feature.** The real 2007 file was downloaded and measured
+first, so this was a choice between live options rather than a guess:
+
+| | figure |
+|---|---|
+| IC2007Mission rows with text | 3,608 |
+| matched to our 1,907 universe | **690 (36.2%)** |
+| public institutions | 195 / 726 = **26.9%** |
+| private nonprofit | 454 / 1,095 = 41.5% |
+| top 100 by Value Score | 36 |
+| **the shipped default top 20** | **7** |
+
+Shipping it on the 2007 file (the alternative) fails on its own terms. The panel's
+purpose is comparison across the shortlist, and it could speak for 7 of the 20
+colleges on screen — the 13 silent ones including Williams, MIT, Princeton and Yale.
+A user asking "which of these emphasise access?" would get an answer shaped by which
+colleges answered a survey in 2007, and the gap is sector-skewed, so publics lose
+twice. Labelling that honestly makes it *not a lie*; it cannot make it useful. And
+19-year-old prose beside 2021-22 money invites reading the two as contemporaneous.
+
+Keeping it dark was rejected for the reason the brief gives: the synthetic file is
+what makes an accidental revival dangerous, so it had to go either way, and what
+remained would have been dead code plus a loaded gun.
+
+Removed: `app/rag.py`, both `/api/rag/*` endpoints, `data.load_missions()`, the
+frontend panel and `Markdown.jsx`, `scikit-learn` and `anthropic` from
+`requirements.txt`, `INDEX_DIR` and the `ANTHROPIC_API_KEY` wiring from the Dockerfile,
+compose file and K8s manifests, and the mission block from `make_sample_data.py`.
+Deleted locally: the synthetic CSV and `backend/index/`.
+
+**If a real source is ever wanted**, the measured facts are in the table above — the
+2007 file exists and reaches 36.2%. That is a decision someone can now make informed.
+
+### Phase 4 — Split merit aid from need-based aid (Common Data Set) ⚠️ *scoped down 2026-11-17*
 
 **This is the app's central unfinished business.** It is deferred, not dropped.
 
@@ -213,37 +257,81 @@ colleges award no merit aid at all.**
       Covered by `backend/tests/test_merit_policy.py`.
 
 **What remains — the real fix.** The authoritative source is the **Common Data Set,
-section H2A**, which reports need-based and non-need-based institutional aid separately
-for each institution. It is published per-institution as a PDF or spreadsheet on each
-college's institutional-research page. There is no bulk download, which is the entire
-reason this is a project rather than a column rename.
+section H2A line n**: students with no financial need awarded institutional
+non-need-based scholarship or grant aid, excluding athletic awards. It is published
+per-institution as a PDF, spreadsheet or dashboard on each college's
+institutional-research page.
 
-- [ ] **Verify the existing 26 first.** The curated list is marked `provisional`:
-      compiled from well-documented institutional policy, not yet checked line-by-line
-      against each school's current CDS. Checking 26 is a morning's work and it either
-      validates the shipped list or finds the error before anyone relies on it. **Do this
-      before any scraping** — it also calibrates how reliably H2A can be read.
-- [ ] **Scope the crawl.** 1,907 institutions, no common URL pattern, mixed PDF/XLSX/HTML.
-      Expect partial coverage; design for it from the start rather than discovering it at
-      70%. Decide the acceptable floor up front (the top 200 by Value Score would fix the
-      part of the ranking users actually read).
-- [ ] **Model the result honestly.** Extend `MERIT_POLICY` with a third value for
-      *confirmed to award merit aid* — the vocabulary is a string precisely so this can
-      be added without a schema change. `unknown` must keep meaning **unchecked**.
-- [ ] **Then, and only then, a real merit metric.** With non-need-based dollars split
-      out, `MGI` can finally mean what its name claimed. Until the split exists, do not
-      compute a "merit" number from `IGRNT_A` under any weighting — there is no
-      arithmetic that recovers it.
-- [ ] Record provenance per institution (source URL, CDS year, who checked it). A hand-
-      maintained list without provenance rots silently.
+- [x] **Verified the existing 26** *(2026-11-17)* — and the list was **wrong for five
+      of them.** Each was labelled "need-based only" in the shipped UI while its own
+      current CDS reported non-need-based institutional aid:
 
-**Done when:** `MERIT_POLICY` is sourced from CDS H2A rather than curation for a stated,
-measured share of the dataset — and the UI reports that share instead of implying
-completeness.
+      | institution | CDS | H2A line n | avg award |
+      |---|---|---|---|
+      | Harvard | 2025-26 | 4 / 20 | $4,728 / $5,279 |
+      | Stanford | 2025-26 | 3 / 14 | $11,890 / $13,813 |
+      | Wellesley | 2025-26 | 4 / 5 / 0 | $55,716 |
+      | Middlebury | 2024-25 | 3 / 8 / 0 | $2,700 / $3,850 |
+      | Amherst | 2024-25 | 0 / 6 / 0 | $14,801 |
 
-**Why deferred:** the two mitigations above remove the misleading claim, which was the
-actual harm. The remaining work buys a *feature* (find colleges that award merit aid),
-not a *correction*, and it is large enough to compete with deployment for time.
+      Four confirmed zero — Colgate (2024-25), Haverford (2025-26), MIT (2024-25,
+      reports `N/App`) and Yale (2025-26). **Seventeen could not be verified at all**
+      and are now `unknown`, which is what that value has always claimed to mean.
+
+      `merit_policy.py` was rewritten around verified records with provenance: source
+      URL, CDS year, the figures read, date and method. A third value `awards_merit`
+      now exists, so the vocabulary can state a positive finding instead of only an
+      absence.
+
+      **Yale is why every record carries a year.** Its H2A line n reads 6/28/1 in
+      2023-24, 6/24/0 in 2024-25, 0/0/0 in 2025-26. A policy claim with no year is not
+      a fact.
+
+- [x] **Scoped the crawl — and the answer is: do not build it.** Measured on the 26
+      best-documented institutions in American higher education:
+
+      | calibration | result |
+      |---|---|
+      | CDS source URL discoverable | 26 / 26 — but only via a third-party archive |
+      | document actually downloadable | **19 / 26 (73%)** — 404s, 403s, expired Box links, a Tableau dashboard |
+      | H2A line n readable once downloaded | **10 / 19 (53%)** — values live in AcroForm fields, or are masked (`** *`), or are coded spreadsheet cells |
+      | **end-to-end success** | **10 / 26 = 38%** |
+      | time | ~80 minutes for 26, *with* source URLs already in hand |
+
+      If the Ivies and the NESCAC yield 38%, the long tail of 1,907 will be worse, and
+      the independent evidence agrees: a mature third-party CDS archive that has
+      already tried this at scale reports, of 3,000 institutions checked, **1,464
+      (49%) with no public CDS found** and only **326 (11%) with a current one**.
+
+      A crawler would therefore spend real effort to land somewhere near 20–35%
+      coverage, heavily skewed toward wealthy privates — the same sector skew that
+      killed the mission feature. **Recommendation: no crawler.** Extend the verified
+      list by hand when a specific college matters, which the provenance model now
+      supports, and keep `unknown` honest for the rest.
+
+- [x] **A bulk source was retested, as the plan asked, and it does not deliver.**
+      `collegedata.fyi` publishes an open CDS archive whose field dictionary declares
+      two H2A-derived fields. The bulk snapshot contains **zero rows** for them (all
+      7,056 facts are admissions fields). Its API does return them — but it reports
+      Yale as **0.0%** where Yale's own 2024-25 CDS reports 24 recipients at $29,162.
+      It was used only to locate primary documents; no figure in `merit_policy.py`
+      comes from it.
+
+- [x] **Modelled the result honestly.** `need_only` / `awards_merit` / `unknown`, with
+      `coverage()` reported through `/api/meta` and `/api/merit-policy` so the UI
+      states 9 of 1,907 rather than implying completeness.
+
+- [ ] **A real merit metric remains impossible** for all but those 9. Until the split
+      exists for an institution, no "merit" number is computed from `IGRNT_A` under any
+      weighting — there is no arithmetic that recovers it.
+
+**Done when:** `MERIT_POLICY` is sourced from CDS H2A for a stated, measured share of
+the dataset — and the UI reports that share. **Met**, at 9 of 1,907, with the share
+reported rather than implied.
+
+**Why the scope changed:** the phase assumed the ceiling was effort. It is not — it is
+publication. Roughly half of institutions do not publish a findable CDS at all, and a
+meaningful share of those that do publish it in a form no parser can read.
 
 ### Phase 5 — Harden the app for a real user
 
@@ -409,7 +497,7 @@ Reverting is: restore those files and revert the filename commit.
 | ~~`COA` understates the real cost basket~~ | ~~Biases `DISCOUNT` and `AID_SHARE`~~ | ✅ **resolved Phase 3** — COA recovered from the published net-price identity |
 | GKE Ingress health-checks `/` | 502s on `/api/*` with the site up | Phase 8 — fix manifests before first deploy |
 | `getColleges` failure is invisible to users | Empty table, no explanation | Phase 5 — the `/api/meta` path is fixed, this one is not |
-| Curated need-only list is unverified | A college wrongly labelled "need-based only" | Phase 4 — verify all 26 against CDS H2A before relying on it |
+| ~~Curated need-only list is unverified~~ | ~~A college wrongly labelled "need-based only"~~ | ✅ **resolved 2026-11-17** — verified against CDS H2A; 5 of 26 were wrong and are corrected |
 | GCP left running after the demo | Continuous billing | Phase 9 teardown; `DEPLOYMENT.md` has the commands |
 | Two agents editing one file | Lost work | `HANDOFF.md` — announce files before editing |
 

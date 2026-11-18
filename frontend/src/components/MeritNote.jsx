@@ -17,14 +17,16 @@ export default function MeritNote({ meta, shown = 0 }) {
         {shown > 0 && (
           <>
             <b>{shown}</b> of the colleges shown
-            {' '}{shown === 1 ? 'is' : 'are'} on a curated list of institutions that publicly
-            award no merit scholarships — marked <em>need-based only</em> in the table.{' '}
+            {' '}{shown === 1 ? 'reports' : 'report'} no merit aid in their own Common
+            Data Set — marked <em>no merit aid</em> in the table.{' '}
           </>
         )}
-        That list covers {meta?.no_merit_aid_count ?? 0} institutions out of{' '}
-        {meta?.colleges_in_dataset?.toLocaleString() ?? '—'}, so a blank means
-        <b> not checked</b>, not that merit aid is on offer. Splitting the two properly
-        needs Common Data Set section H2A, per institution.
+        We have read the Common Data Set for{' '}
+        {meta?.merit_policy_coverage?.verified ?? 0} institutions out of{' '}
+        {meta?.colleges_in_dataset?.toLocaleString() ?? '—'}. A dash means
+        <b> not checked</b> — not that merit aid is on offer. Each label names the
+        year it came from, because the answer moves: Yale reported 24 non-need awards
+        in 2024-25 and none in 2025-26.
       </p>
     </div>
   );

@@ -2,9 +2,8 @@
 import math
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
-from . import config, data, education, merit_policy, rag
+from . import config, data, education, merit_policy
 
 app = FastAPI(title="Merit Aid Finder (reconstruction)", version="1.0")
 app.add_middleware(
@@ -59,34 +58,23 @@ def education_distributions():
 
 @app.get("/api/merit-policy")
 def get_merit_policy():
-    """The curated need-only roster, so the UI can show its size and sourcing."""
+    """Every CDS-verified merit-aid record, with provenance and coverage."""
     return {
-        "need_only": merit_policy.roster(),
-        "count": len(merit_policy.NEED_ONLY_UNITIDS),
-        "status": "provisional",
+        "verified": merit_policy.roster(),
+        "unresolved": merit_policy.unverified(),
+        "coverage": merit_policy.coverage(),
+        "status": "cds_sourced",
         "note": (
-            "IPEDS reports total institutional grant aid (IGRNT_A) with no "
-            "need-versus-merit split, so this list is curated from published "
-            "institutional policy, not derived from the data. Absence means "
-            "unchecked, not that merit aid is offered."
+            "Each record was read from that institution's own Common Data Set, "
+            "section H2A line n: students with no financial need who were awarded "
+            "institutional non-need-based scholarship or grant aid, excluding "
+            "athletic awards and tuition benefits. 'need_only' means that line "
+            "reported zero for the CDS year shown -- not that no student ever "
+            "received merit money, since the CDS cannot see merit aid layered on "
+            "top of a need award. 'unknown' means unchecked, for the whole "
+            "dataset except the institutions listed here."
         ),
     }
-
-
-@app.get("/api/rag/status")
-def rag_status():
-    return rag.status()
-
-
-class RagQuery(BaseModel):
-    question: str
-    unitids: list[int] | None = None
-    college_names: dict[str, str] | None = None
-
-
-@app.post("/api/rag/query")
-def rag_query(q: RagQuery):
-    return rag.answer(q.question, unitids=q.unitids, college_names=q.college_names)
 
 
 @app.get("/api/health")
@@ -96,9 +84,8 @@ def health():
 
 @app.on_event("startup")
 def _warmup():
-    """Build the dataset + RAG index once at boot so status reports ready."""
+    """Build the dataset once at boot so the first request isn't slow."""
     try:
         data.build_dataset()
-        rag.get_index()
     except Exception as e:  # never let warmup crash the server
         print(f"[warmup] skipped: {e}")

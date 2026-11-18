@@ -100,18 +100,31 @@ Notes:
   affects no score; `exclude_no_merit` is the only thing that reads it.
 
 ### `GET /api/merit-policy`  *(added)*
-The curated roster itself, so a client can state the list's size and sourcing rather
-than imply completeness.
+Every CDS-verified record with its provenance, plus the institutions the check could
+not resolve — so a client can state how far the sourcing got rather than imply
+completeness.
 ```json
 {
-  "need_only": [{ "unitid": 217156, "name": "Brown University", "basis": "ivy_agreement" }],
-  "count": 26,
-  "status": "provisional",
-  "note": "IPEDS reports total institutional grant aid (IGRNT_A) with no need-versus-merit split..."
+  "verified": [{
+    "unitid": 166027, "name": "Harvard University", "policy": "awards_merit",
+    "cds_year": "2025-26", "line_n": "4 / 20", "avg": "$4,728 / $5,279",
+    "note": "Previously labelled need-based only. That was wrong.",
+    "source_url": "https://...CDS_2025-2026.pdf",
+    "checked_on": "2026-11-17", "method": "parsed+read"
+  }],
+  "unresolved": [{ "unitid": 217156, "name": "Brown University", "reason": "CDS download 404" }],
+  "coverage": { "verified": 9, "need_only": 4, "awards_merit": 5,
+                "attempted": 26, "unresolved": 17,
+                "checked_on": "2026-11-17",
+                "source": "Common Data Set section H2A, line n" },
+  "status": "cds_sourced",
+  "note": "..."
 }
 ```
-`basis` is `ivy_agreement` (the Ivy League agreement commits all eight members to
-need-based aid only) or `published` (the institution's own aid pages state it).
+**Shape changed 2026-11-17.** It previously returned `need_only` / `count` / `basis`
+from a hand-compiled roster. That roster was wrong for 5 of its 26 entries, so it was
+replaced by per-institution CDS sourcing. `policy` is `need_only`, `awards_merit` or
+(by absence) `unknown` — see `FORMULAS.md` §4.
 
 ### `GET /api/education/distributions`  *(added)*
 Reference distributions for the education section, ~8 KB. Lets the browser re-score a
@@ -138,13 +151,20 @@ hypothetical college on every slider drag without a request per drag.
 - Every summary is computed over non-null values only — SAT covers 985 colleges, and
   counting the blanks would drag the median toward zero.
 
-### `GET /api/rag/status`
-```json
-{ "index_ready": true, "api_key_set": true }
-```
+### ~~`GET /api/rag/status`~~ and ~~`POST /api/rag/query`~~ — **removed 2026-11-17**
 
-### `POST /api/rag/query`  (the "Ask" button)
-Not fully captured (backend returned 502 during probing), but the UI sends a natural-language question and the answer is drawn only from the mission statements of the colleges currently shown. Expected shape: `{ "question": "...", ... }` → `{ "answer": "...", "sources": [...] }`.
+A deliberate, stated divergence from the reference app, which does expose both.
+
+They served mission-statement retrieval built on `IC2022Mission.csv` — a file that is
+**sample-generator output**, not IPEDS data. Verified against the IPEDS data center:
+`IC2022Mission.zip` returns 404, as does `IC2008Mission.zip`; 2006 and 2007 return 200.
+IPEDS has published no mission file since 2007, so these endpoints could only ever have
+served fabricated text. `CLAUDE.md` §2 forbids shipping known-untrue content, so they
+were removed rather than reproduced. The real 2007 file reaches only 36.2% of our
+universe (7 of the default top 20) — measured, not assumed. Full reasoning in
+`PROJECT_STATE.md` Phase 3.5.
+
+Clients should expect **5 endpoints**, not 7.
 
 ## Observed reliability note
 `/api/*` intermittently returned **502 Bad Gateway** while the static site stayed up — backend upstream was briefly unreachable. Real, reproducible; worth flagging to your friend.

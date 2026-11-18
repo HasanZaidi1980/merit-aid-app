@@ -130,13 +130,67 @@ AID_SHARE       = IGRNT_A / COA
 MGI             = IGRNT_A / TUITION2
 ```
 
-`AID_SHARE` and `MGI` are **not** circular: `IGRNT_A` averages a different cohort
-(all aided undergraduates, full year) than `BAND_GRANT` (the $75k–$110k Title IV band).
+`AID_SHARE` and `MGI` are **not** circular: `IGRNT_A` measures a different thing from
+`BAND_GRANT`. That difference is an **accepted limitation**, quantified below.
 
-That cohort difference is also why `AID_SHARE` can exceed 1 — the average institutional
-grant can exceed the whole cost of attendance at a college whose aided students are
-unlike its mid-income ones. True of **one** college in 2022-23; flagged
-`aid_share_above_coa` rather than left to top the ranking.
+### The IGRNT_A / BAND_GRANT cohort mismatch — accepted, not solved
+
+`AID_SHARE` divides one figure by a COA built from another. They differ three ways:
+
+| | `IGRNT_A` (numerator) | `BAND_GRANT` (inside COA) |
+|---|---|---|
+| **source** | institutional grants only | federal + state/local + institutional |
+| **income** | all incomes | $75,001–$110,000 only |
+| **averaged over** | students who received an institutional grant | *all* Title IV recipients in the band |
+
+The denominator fact was verified: `IGRNT_A == IGRNT_T / IGRNT_N` on **1,907 of 1,907**,
+so it is a per-recipient average, while `GIS4A42 == GIS4T42 / GIS4N42` is per-cohort.
+
+**Can it be fixed?** No. SFA2122 was searched for an institution-only grant figure
+broken out by income band: the `IGRNT_*` family is institution-only but all-income, and
+the `GIS4*`/`GRN4*` family is band-specific but all-source. **No variable is both**, and
+none of the 332 SFA variables mentions need, non-need or merit at all.
+
+**How big is it?** Institution-only aid *exceeds* all-source aid at **527 of 1,907
+colleges (27.6%)** — arithmetically impossible if the two described the same students,
+so that figure is a lower bound on the disagreement. The ratio `IGRNT_A / BAND_GRANT`
+has median 0.88, p10 0.53, p90 1.58.
+
+**Why not just use `BAND_GRANT` for AID_SHARE?** It would give a cleaner metric (median
+0.3336, nothing above 1.0) but would measure *all-source* generosity — mostly federal
+Pell and state aid, which the college did not fund. The app's subject is what the
+institution itself gives, so the noisier institution-only figure is the right one.
+
+This is also why `AID_SHARE` can exceed 1: the average institutional grant can exceed
+the whole cost of attendance where a college's grant recipients are unlike its
+mid-income Title IV students. True of **one** college; flagged `aid_share_above_coa`
+rather than left to top the ranking.
+
+### Merit policy — `MERIT_POLICY`
+
+Not a formula: a per-institution fact read from that college's own **Common Data Set,
+section H2A line n** — students with no financial need awarded institutional
+non-need-based scholarship or grant aid, *excluding athletic awards and tuition
+benefits*. Three values:
+
+| value | meaning |
+|---|---|
+| `need_only` | H2A line n reported **0** for the year shown |
+| `awards_merit` | H2A line n reported **more than 0** |
+| `unknown` | **unchecked** — 1,898 of 1,907 colleges |
+
+Scope limits, both real:
+
+- **Academic merit only.** Athletic awards are excluded by the CDS question itself, so
+  a `need_only` college can still fund athletes — Stanford reports 547 athletic awards
+  and Colgate 329 on line p.
+- **No-need students only.** Merit money layered on top of a need award is invisible to
+  H2A, so `need_only` means "reported zero on that line", not "no student ever received
+  a dollar for merit".
+
+Every record carries its source URL, CDS year, the figures read, and the date checked.
+The year matters: **Yale** reports 6/28/1 in 2023-24, 6/24/0 in 2024-25 and 0/0/0 in
+2025-26. A policy claim without a year attached is not a fact.
 
 **`MGI` is a misnomer inherited from the original brief.** `IGRNT_A` conflates
 need-based and merit aid and IPEDS publishes no split, so nothing user-facing calls it
@@ -267,7 +321,7 @@ error. 7.4% of `GBA4RTT` values are already ≤ 1.5.
 | flag | meaning |
 |---|---|
 | `no_grad_rate` | no graduation rate — Value Score is unscoreable |
-| `aid_share_above_coa` | average grant exceeds total cost; generosity unusable |
+| `aid_share_above_coa` | average grant exceeds total cost; generosity unusable (see the cohort mismatch in §4) |
 
 `incomplete_coa` was **retired** by the COA change: COA no longer has partially
 present components, so the flag could never fire again. `flagged_count` fell from 379

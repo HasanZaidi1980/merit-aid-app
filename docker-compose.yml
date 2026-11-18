@@ -5,11 +5,8 @@ services:
     build: ./backend
     environment:
       - DATA_DIR=/data
-      - INDEX_DIR=/index
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}   # set in a .env file to enable AI answers
     volumes:
-      - ./backend/data:/data        # put the 8 IPEDS CSVs here
-      - backend_index:/index        # persisted vector index
+      - ./backend/data:/data        # put the 6 IPEDS CSVs here
     ports:
       - "8000:8000"
 
@@ -20,5 +17,3 @@ services:
     depends_on:
       - backend
 
-volumes:
-  backend_index:
