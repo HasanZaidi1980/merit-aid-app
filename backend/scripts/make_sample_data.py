@@ -1,5 +1,9 @@
 """Generate small, realistic sample IPEDS files so the app runs without the real
-dataset. Writes the 7 expected CSVs into ../data. Swap in real IPEDS files later.
+dataset. Writes the 6 expected CSVs into ../data. Swap in real IPEDS files later.
+
+Output directory: the first command-line argument, else $DATA_DIR, else ../data --
+the same precedence app/config.py uses, so the smoke test can point both the
+generator and the server at one throwaway directory and never touch backend/data.
 
 Note: UNITIDs here are synthetic (100000+), so they match nothing on the curated
 need-only roster in app/merit_policy.py and every row comes out MERIT_POLICY=unknown.
@@ -8,12 +12,15 @@ attaching a real institution's published aid policy to a fake college would be w
 than leaving the feature dark until real data is installed.
 """
 import os
+import sys
+
 import numpy as np
 import pandas as pd
 
 rng = np.random.default_rng(42)
 N = 300
-DATA = os.path.join(os.path.dirname(__file__), "..", "data")
+_DEFAULT = os.path.join(os.path.dirname(__file__), "..", "data")
+DATA = sys.argv[1] if len(sys.argv) > 1 else os.getenv("DATA_DIR", _DEFAULT)
 os.makedirs(DATA, exist_ok=True)
 
 unitids = np.arange(100000, 100000 + N)

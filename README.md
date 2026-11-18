@@ -1,5 +1,7 @@
 # Merit Aid Finder — Reconstruction
 
+[![CI](https://github.com/HasanZaidi1980/merit-aid-app/actions/workflows/ci.yml/badge.svg)](https://github.com/HasanZaidi1980/merit-aid-app/actions/workflows/ci.yml)
+
 > **What this is:** a from-scratch, working rebuild that matches the *observable behavior*
 > of the live app at `http://136.68.78.253/` — same API endpoints, same data
 > schema, same charts, same scoring. It is **NOT** a copy of your friend's source code
@@ -36,7 +38,9 @@ npm run dev                                 # http://localhost:5173 (proxies /ap
 ```bash
 cd backend
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                                      # 40 tests, no data files required
+pytest                                      # 88 tests, no data files required
+ruff check .                                # lint (config: backend/ruff.toml)
+python scripts/smoke_test.py                # boot real uvicorn over sample data
 ```
 Fixtures are built in memory, not read from `backend/data/` — the sample data has no
 missing values, so it exercises none of the data-quality logic.

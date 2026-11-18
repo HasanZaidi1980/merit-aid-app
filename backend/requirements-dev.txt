@@ -14,3 +14,11 @@ openpyxl==3.1.5
 # both the page text and, for a fillable CDS, the AcroForm fields where the H2A
 # values actually live (Carleton, Davidson, Wake Forest all read that way).
 pypdf==7.1.0
+
+# The HTTP client fastapi.testclient is built on. Pinned explicitly rather than
+# relied on as somebody else's transitive dependency: CI installs only what these
+# files name, and `from fastapi.testclient import TestClient` raises without it.
+httpx==0.28.1
+
+# Linter. One pinned binary, no plugin tree to keep in sync; config in ruff.toml.
+ruff==0.14.5

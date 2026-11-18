@@ -24,11 +24,25 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.merit_policy import (ATTEMPTED_UNRESOLVED, AWARDS_MERIT, CURRENT_EDITION,
-                              NEED_ONLY, NOT_CHECKED, RESOLVED,
-                              STALE_AFTER_EDITIONS, UNKNOWN, coverage, is_current,
-                              merit_policy, merit_policy_status, merit_policy_year,
-                              provenance, roster, unverified)
+from app import merit_policy as mp
+from app.merit_policy import (
+    ATTEMPTED_UNRESOLVED,
+    AWARDS_MERIT,
+    CURRENT_EDITION,
+    NEED_ONLY,
+    NOT_CHECKED,
+    RESOLVED,
+    STALE_AFTER_EDITIONS,
+    UNKNOWN,
+    coverage,
+    is_current,
+    merit_policy,
+    merit_policy_status,
+    merit_policy_year,
+    provenance,
+    roster,
+    unverified,
+)
 from app.scoring import add_metrics, rank_and_filter
 
 # Yale and Haverford report zero on CDS H2A line n; Harvard and Stanford report more
@@ -306,3 +320,104 @@ def test_coverage_states_its_scope_and_its_skew():
     assert c["sector_caveat"] and "private" in c["sector_caveat"]
     assert c["current_edition"] == CURRENT_EDITION
     assert c["stale_after_editions"] == STALE_AFTER_EDITIONS
+
+
+def _edition_label(start_year: int) -> str:
+    """2027 -> '2027-28'. The CDS names an edition by the academic year it covers."""
+    return f"{start_year}-{str(start_year + 1)[2:]}"
+
+
+def test_expiry_fires_when_the_edition_advances(monkeypatch):
+    """Cover the mechanism, not its current dormancy.
+
+    Nothing on the roster is stale today, so every stale branch -- dropping a record
+    from the roster, re-labelling it attempted, generating its reason -- is unreached
+    code until a human bumps CURRENT_EDITION. That bump is exactly when a regression
+    would ship, and the instinct at that moment is to edit whichever number went red.
+    So the edition is injected here and the records are watched leaving.
+
+    Counts are derived from the roster rather than written down, so this test does
+    not have to be rewritten every time a record is added or a year moves on.
+    """
+    before = coverage()
+    assert before["stale"] == 0, "nothing is stale yet -- that is what makes the rule dormant"
+
+    oldest = min(int(e["cds_year"][:4]) for e in roster())
+    future = _edition_label(oldest + STALE_AFTER_EDITIONS + 1)
+    expiring = {e["unitid"] for e in roster()
+                if int(e["cds_year"][:4]) == oldest}
+
+    monkeypatch.setattr(mp, "CURRENT_EDITION", future)
+
+    after = coverage()
+    assert after["stale"] == len(expiring) >= 1
+    assert after["verified"] == before["verified"] - len(expiring)
+    # Attempting an institution does not un-happen. The denominator is stable; what
+    # moves is how many of those attempts still count as answers.
+    assert after["attempted"] == before["attempted"]
+    assert after["unresolved"] == before["unresolved"] + len(expiring)
+    assert after["current_edition"] == future
+
+    victim = sorted(expiring)[0]
+    # Reverts to `unknown` on its own -- no edit to the record, no list to maintain.
+    assert mp.merit_policy(pd.Series([victim])).iloc[0] == UNKNOWN
+    assert mp.merit_policy_year(pd.Series([victim])).iloc[0] == ""
+    assert mp.merit_policy_status(pd.Series([victim])).iloc[0] == ATTEMPTED_UNRESOLVED
+    assert provenance(victim) is None
+    assert victim not in {e["unitid"] for e in roster()}
+
+    # And it is reported as attempted, with the reason saying why it stopped counting.
+    reasons = {u["unitid"]: u["reason"] for u in unverified()}
+    assert "outside the staleness window" in reasons[victim]
+    assert f"current edition {future}" in reasons[victim]
+
+    # Nothing inside the window moved.
+    for e in roster():
+        assert is_current(e["cds_year"], future), e["name"]
+
+    # Reversible, because expiry is a function of the edition and not a mutation of
+    # state. A record that aged out comes back if the edition is corrected.
+    monkeypatch.undo()
+    assert coverage() == before
+    assert provenance(victim) is not None
+
+
+def test_a_count_that_must_be_asserted_freezes_the_edition(monkeypatch):
+    """How to write a count assertion here without tying it to the calendar.
+
+    Pin the edition, and the counts stop being a function of when the suite runs.
+    This one holds the whole roster current, so it asserts the true totals: 24
+    records read from a CDS, 5 of them reporting zero on H2A line n, 19 reporting
+    more than zero, out of 56 institutions attempted.
+    """
+    newest = max(int(e["cds_year"][:4]) for e in roster())
+    monkeypatch.setattr(mp, "CURRENT_EDITION", _edition_label(newest))
+
+    c = coverage()
+    assert c["verified"] == 24
+    assert c["need_only"] == 5
+    assert c["awards_merit"] == 19
+    assert c["need_only"] + c["awards_merit"] == c["verified"]
+    assert c["attempted"] == 56
+    assert c["stale"] == 0
+
+    # 24 of 56 attempted, not 24 of 1,907. The scope is part of the number.
+    assert c["verified"] < c["attempted"]
+    assert "not the 1,907-college dataset" in c["scope"]
+
+
+def test_no_verdict_depends_on_the_clock():
+    """The expiry rule must stay a function of a declared edition, never of today's
+    date. A suite whose results change overnight teaches you to edit the number
+    rather than ask what moved, and a verdict that expires on a Tuesday with no
+    commit is not auditable."""
+    import inspect
+
+    src = inspect.getsource(mp)
+    for forbidden in ["datetime", "time.time", "date.today", "utcnow"]:
+        assert forbidden not in src, f"merit_policy reads {forbidden}"
+
+    # Belt and braces: nothing clock-shaped was imported into the module either.
+    clocks = {k for k, v in vars(mp).items()
+              if getattr(v, "__name__", "") in {"datetime", "date", "time", "calendar"}}
+    assert not clocks, clocks

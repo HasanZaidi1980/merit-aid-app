@@ -1,7 +1,9 @@
 """FastAPI app. Mirrors the endpoints observed on the live site."""
 import math
-from fastapi import FastAPI, Query
+
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from . import config, data, education, merit_policy
 
@@ -34,14 +36,36 @@ def get_meta():
     return data.meta()
 
 
+# Exactly the filters /api/colleges accepts. Anything else is rejected rather than
+# ignored: `max_netprice=60000` silently fell back to the default and returned a
+# shorter list that looked like an answer, which is the same failure as a label
+# overstating its data -- a wrong result presented as a result.
+COLLEGE_PARAMS = frozenset([
+    "max_net_price", "mgi_at_least_median", "top_n", "exclude_flagged",
+    "exclude_no_merit",
+])
+
+
 @app.get("/api/colleges")
 def get_colleges(
-    max_net_price: float = Query(config.DEFAULTS["max_net_price"]),
+    request: Request,
+    # Bounds, not just types. `top_n=-1` used to return 200 with n-1 rows, because
+    # DataFrame.head(-1) drops the last row instead of erroring -- nonsense input
+    # produced a plausible-looking ranking. `le` is the whole dataset plus room.
+    max_net_price: float = Query(config.DEFAULTS["max_net_price"], ge=0),
     mgi_at_least_median: bool = Query(config.DEFAULTS["mgi_at_least_median"]),
-    top_n: int = Query(config.DEFAULTS["top_n"]),
+    top_n: int = Query(config.DEFAULTS["top_n"], ge=1, le=2000),
     exclude_flagged: bool = Query(config.DEFAULTS["exclude_flagged"]),
     exclude_no_merit: bool = Query(config.DEFAULTS["exclude_no_merit"]),
 ):
+    unknown = sorted(set(request.query_params) - COLLEGE_PARAMS)
+    if unknown:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"Unknown query parameter(s): {', '.join(unknown)}. "
+                               f"Accepted: {', '.join(sorted(COLLEGE_PARAMS))}."},
+        )
+
     from .scoring import rank_and_filter
     df = data.build_dataset()
     ranked = rank_and_filter(df, max_net_price, mgi_at_least_median, top_n,
@@ -87,6 +111,18 @@ def get_merit_policy():
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+@app.exception_handler(data.DatasetUnavailable)
+def _dataset_unavailable(request: Request, exc: data.DatasetUnavailable):
+    """503 with the reason, not a 500 traceback.
+
+    The dataset lives outside the image (DATA_DIR), so "the files are not there" is a
+    deployment state, not a bug in the request -- and it is the exact state an
+    emptyDir-mounted pod boots into. The message names the directory and the file, so
+    `curl /api/meta` diagnoses it without shell access to the container.
+    """
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 @app.on_event("startup")

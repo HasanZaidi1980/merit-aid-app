@@ -352,7 +352,9 @@ cd ../frontend && npm install && npm run dev   # http://localhost:5173
 **Tests:**
 ```bash
 cd backend && pip install -r requirements.txt -r requirements-dev.txt
-pytest                                 # 9 tests, no data files needed
+pytest                                 # 88 tests, no data files needed
+ruff check .                           # lint; config in backend/ruff.toml
+python scripts/smoke_test.py           # boots real uvicorn over sample data
 ```
 The suite builds its fixtures in memory rather than reading `backend/data/`, because the generated sample data has no missing values and so exercises none of the flag/degradation logic. Don't "fix" a test by pointing it at the CSVs.
 
@@ -422,12 +424,14 @@ In Docker the frontend proxies `/api` to the backend container by service name (
 
 ### Data
 
-**The 7 IPEDS filenames are exact.** Drop them in `backend/data/`:
+**The 6 IPEDS filenames are exact.** Drop them in `backend/data/`:
 ```
 HD2022.csv  SFA2122.csv  IC2022_AY.csv  ADM2022.csv
-DRVADM2022.csv  DRVGR2022.csv  IC2022Mission.csv
+DRVADM2022.csv  DRVGR2022.csv
 ```
-A missing file raises a `FileNotFoundError` naming the file — that error means a name mismatch, not corrupt data.
+Six, not seven: `IC2022Mission.csv` was removed in Phase 3.5 — it never existed in IPEDS and the copy in this repo was sample-generator output.
+
+A missing file raises `data.DatasetUnavailable` naming the file and the directory — that error means a name mismatch, not corrupt data. So does a directory of files that are *found* but yield no usable rows (wrong release, renamed columns), which is reported with the row counts rather than surfacing later as a numpy error on an empty slice. The API answers both with **503** and the message; `/api/health` stays 200, because the process is fine and the data is not.
 
 **`build_dataset()` is `lru_cache`d.** The dataset loads once per process, so swapping CSVs has **no effect until the backend restarts.** If your numbers don't change after replacing the data, that's why.
 
@@ -488,9 +492,10 @@ Nothing has been deployed yet, so none of the GCP steps are battle-tested. Three
 Task *ideas*, not a sequenced plan — `PROJECT_STATE.md` owns the roadmap.
 
 **Test**
-- ~~Add a `pytest` suite for `scoring.py`~~ — done, `backend/tests/test_scoring.py`. Extend it to `data.py` (load/merge/clean, sentinel handling, empty-result handling).
-- Add API tests (FastAPI `TestClient`) for all endpoints, including malformed query params and the RAG endpoint with/without an API key.
-- Add a smoke test that boots the stack and hits `/api/health`, `/api/meta`, `/api/colleges`.
+- ~~Add a `pytest` suite for `scoring.py`~~ — done, `backend/tests/test_scoring.py`.
+- ~~Extend it to `data.py` (load/merge/clean, sentinel handling, empty-result handling)~~ — done in Phase 6, `backend/tests/test_data_pipeline.py`, against the synthetic fixture dataset in `backend/tests/fixtures/`.
+- ~~Add API tests (FastAPI `TestClient`) for all endpoints, including malformed query params~~ — done in Phase 6, `backend/tests/test_api.py`. The RAG half is moot: `/api/rag/*` was removed, and the test now asserts it stays removed.
+- ~~Add a smoke test that boots the stack and hits `/api/health`, `/api/meta`, `/api/colleges`~~ — done in Phase 6, `backend/scripts/smoke_test.py`.
 
 **Analyze**
 - Validate the scoring statistically; report whether Value Score behaves sensibly across the real dataset (distribution, sensitivity to each component, correlation between Value Score and Legacy Score).

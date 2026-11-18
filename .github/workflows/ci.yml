@@ -1,0 +1,87 @@
+# Lint + tests on every push and pull request.
+#
+# Phase 6. The point of this file: merit_policy.py is 24 hand-curated factual claims
+# about named institutions, each with a source document and an expiry, and the
+# discipline protecting them was somebody remembering to run pytest. Five of those
+# claims were once wrong about real colleges. A check that only runs when remembered
+# is not a check.
+#
+# Two things this job deliberately does not need:
+#
+#   * No dataset. The suite is fixture-based -- in-memory frames plus the synthetic
+#     CSVs in backend/tests/fixtures/ -- so it runs with no backend/data/ present.
+#     The real IPEDS files are not in the repo and never will be.
+#   * No secrets. The RAG panel was the only thing that ever wanted
+#     ANTHROPIC_API_KEY, and it was removed in Phase 3.5. A public repo with no
+#     secrets in CI has nothing for a workflow to leak.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Read-only. This workflow has no reason to write to the repository.
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (lint, tests, smoke)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      # 3.12, not 3.13: pandas 2.2.2 / numpy 1.26.4 have no 3.13 wheels, which is
+      # the trap recorded in PROJECT_BRIEF.md section 9.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Tests
+        run: pytest -q
+
+      # Starts a real uvicorn over generated sample data and talks to it over HTTP.
+      # Catches what in-process TestClient cannot: the app failing to boot, $DATA_DIR
+      # not being read the way a container reads it, a port never opening.
+      - name: Smoke test
+        run: python scripts/smoke_test.py
+
+  frontend:
+    name: frontend (build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # A build failure here is a blank page in production, and the backend tests
+      # cannot see it. There is no JS linter configured in this project, so the build
+      # is the check.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build

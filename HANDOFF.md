@@ -12,7 +12,12 @@ For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next f
   github.com/HasanZaidi1980/merit-aid-app.
 - **Works locally.** Docker (`docker compose up --build` → http://localhost:8080) and
   direct (uvicorn :8000 + vite :5173).
-- **40 tests pass.** `cd backend && pytest` — in-memory fixtures, no data files needed.
+- **88 tests pass.** `cd backend && pytest` — in-memory fixtures plus the synthetic
+  CSVs in `backend/tests/fixtures/`, so no real data files are needed. `ruff check .`
+  is clean and both run in CI on every push (`.github/workflows/ci.yml`).
+- **`python scripts/smoke_test.py`** boots real uvicorn over generated sample data and
+  checks the three endpoints a deployment check would call. Touches nothing in
+  `backend/data/`.
 - **Not deployed to GCP.** Nothing pushed to GKE/Artifact Registry. `DEPLOYMENT.md` has
   the steps; they have not been run. The manifests contain a known bug — see
   `PROJECT_STATE.md` Phase 8.
@@ -72,7 +77,7 @@ This is a **from-scratch reconstruction** that matches the *observable behavior*
     26 entries were wrong.** Now CDS-sourced with provenance for 9 institutions;
     the other 17 are `unknown`. A full crawl was measured and recommended against.
   - Reference app showed intermittent **502s** on `/api/*` — reproduce under load.
-- **40 tests** cover scoring, the flag split, net-price coalescing, merit policy and
+- **88 tests** cover scoring, the flag split, net-price coalescing, merit policy and
   its provenance, the COA basis, declared rate scales and the Value Score weights.
   No endpoint tests yet.
 

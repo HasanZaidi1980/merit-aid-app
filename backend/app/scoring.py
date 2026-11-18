@@ -2,8 +2,7 @@
 import pandas as pd
 
 from . import config
-from .merit_policy import (NEED_ONLY, merit_policy, merit_policy_status,
-                           merit_policy_year)
+from .merit_policy import NEED_ONLY, merit_policy, merit_policy_status, merit_policy_year
 
 
 def value_weights() -> dict:

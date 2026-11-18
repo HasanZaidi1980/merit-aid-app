@@ -1,19 +1,30 @@
 """Load + clean the 6 IPEDS CSVs and merge them into one analysis table."""
-import os
 import functools
+import os
+
 import numpy as np
 import pandas as pd
 
-from . import config
-from . import merit_policy
-from . import scoring
+from . import config, merit_policy, scoring
 from .scoring import add_metrics
+
+
+class DatasetUnavailable(RuntimeError):
+    """The dataset cannot be served: files are missing, or no row survived cleaning.
+
+    Raised instead of letting an empty frame propagate. An empty dataset is never a
+    legitimate state for this app -- every endpoint exists to rank colleges -- and the
+    failure it produced downstream was `zero-size array to reduction operation
+    minimum`, from np.nanmin inside meta(), which names neither the cause nor the
+    directory to look in. The deploy makes that concrete: `deploy/k8s/backend.yaml`
+    mounts an emptyDir, so a restarted pod has no CSVs at all (PROJECT_STATE Phase 8).
+    """
 
 
 def _read(name: str) -> pd.DataFrame:
     path = os.path.join(config.DATA_DIR, config.FILES[name])
     if not os.path.exists(path):
-        raise FileNotFoundError(
+        raise DatasetUnavailable(
             f"Missing IPEDS file: {config.FILES[name]} in {config.DATA_DIR}. "
             f"Run scripts/make_sample_data.py for a demo, or add the real files."
         )
@@ -154,7 +165,20 @@ def build_dataset() -> pd.DataFrame:
     df = load_rates(df)
 
     # Drop rows with no financial basis to analyze.
+    merged = len(df)
     df = df.dropna(subset=["TUITION2", "IGRNT_A", "NET_PRICE_MID"], how="any")
+
+    # Zero survivors means the files were found but are not the files this app reads
+    # -- wrong release, renamed columns, or a directory of empty placeholders. Fail
+    # here, naming the directory and the counts, rather than letting an empty frame
+    # reach meta() and surface as a numpy reduction error on an empty slice.
+    if df.empty:
+        raise DatasetUnavailable(
+            f"No usable rows in {config.DATA_DIR}: {merged} institutions survived the "
+            f"4-year degree-granting filter, and none of them reported all of "
+            f"TUITION2, IGRNT_A and a net price (NPT442/NPIS442). The files were "
+            f"found, so this is a content or column-name mismatch, not a missing file."
+        )
 
     df = add_metrics(df)
     return df.reset_index(drop=True)

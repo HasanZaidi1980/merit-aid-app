@@ -1,0 +1,29 @@
+# Lint configuration. Ruff, because it is one pinned binary with no plugin tree to
+# keep in sync -- CI should fail on the code, not on its own toolchain.
+line-length = 100
+target-version = "py312"
+exclude = ["myenv", "venv", ".venv", "data", "index"]
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes: unused imports, undefined names, shadowed definitions
+    "I",    # import order
+    "B",    # bugbear: mutable defaults, loop-variable capture, bare asserts in prod
+    "UP",   # pyupgrade: syntax this Python version has made obsolete
+    "C4",   # flake8-comprehensions
+]
+ignore = [
+    # C408 wants `{"TUITION2": 30000.0, ...}` instead of `dict(TUITION2=30000.0, ...)`.
+    # The test fixtures are keyword-shaped on purpose -- they are spread with
+    # `{**HEALTHY, "INSTNM": ...}` to override one IPEDS column at a time, and
+    # quoting every column name to satisfy a style rule would make the thing the
+    # tests are about harder to read. Rejected on the merits, not silenced blindly.
+    "C408",
+]
+
+[lint.per-file-ignores]
+# Common Data Set source URLs. Every verdict in this module cites the document it was
+# read from, and a URL is not wrappable -- the provenance matters more than 100 columns.
+"app/merit_policy.py" = ["E501"]

@@ -101,4 +101,9 @@ leave the tree in a committable state at the end of a turn.
 | `PROJECT_BRIEF.md` §9 | Environment traps that have actually cost time here (PowerShell `&&`, Python 3.13 vs 3.12, Docker). |
 | `HANDOFF.md` | Where things stand right now. |
 
-Run `cd backend && pytest` before reporting a change complete.
+Run `cd backend && pytest` **and** `ruff check .` before reporting a change complete
+(88 tests; both run in CI on every push, so a skipped lint is a red build on `main`).
+Neither needs `backend/data/`: the suite runs on in-memory fixtures and the synthetic
+CSVs in `backend/tests/fixtures/`, which are test input and never a data fallback.
+`python scripts/smoke_test.py` boots a real server over generated sample data when a
+change touches boot, config or the HTTP layer.

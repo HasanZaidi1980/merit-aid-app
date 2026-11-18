@@ -72,6 +72,9 @@ student ever received a dollar for merit".
 """
 from __future__ import annotations
 
+import functools
+from types import MappingProxyType
+
 import pandas as pd
 
 # Policy values. `unknown` is the default for the whole dataset and means UNCHECKED --
@@ -269,30 +272,65 @@ def _edition_start(cds_year: str) -> int:
     return int(str(cds_year)[:4])
 
 
-def is_current(cds_year: str) -> bool:
+def is_current(cds_year: str, current_edition: str | None = None) -> bool:
     """Is a verdict from this CDS edition still reportable?
 
     A policy claim is point-in-time (see Yale). Outside the window the record stops
     being an answer and the institution reverts to `unknown`.
+
+    `current_edition` defaults to the module constant and exists so the expiry rule
+    can be exercised against a *future* edition. Without it the mechanism is dormant
+    -- today nothing is stale, so the stale branches never run until a human bumps
+    CURRENT_EDITION, which is precisely when you want them already tested.
     """
-    return _edition_start(CURRENT_EDITION) - _edition_start(cds_year) <= STALE_AFTER_EDITIONS
+    ref = CURRENT_EDITION if current_edition is None else current_edition
+    return _edition_start(ref) - _edition_start(cds_year) <= STALE_AFTER_EDITIONS
 
 
 _BY_UNITID: dict[int, dict] = {r["unitid"]: r for r in _VERIFIED}
-_CURRENT: dict[int, dict] = {u: r for u, r in _BY_UNITID.items() if is_current(r["cds_year"])}
-_STALE: dict[int, dict] = {u: r for u, r in _BY_UNITID.items() if u not in _CURRENT}
 _UNVERIFIED_IDS: frozenset[int] = frozenset(u for u, _, _ in _UNVERIFIED)
 
-NEED_ONLY_UNITIDS: frozenset[int] = frozenset(
-    u for u, r in _CURRENT.items() if r["policy"] == NEED_ONLY)
-AWARDS_MERIT_UNITIDS: frozenset[int] = frozenset(
-    u for u, r in _CURRENT.items() if r["policy"] == AWARDS_MERIT)
+
+@functools.lru_cache(maxsize=8)
+def _partition(current_edition: str, stale_after: int):
+    """Split the roster into reportable and expired, for a given edition.
+
+    Read at call time rather than frozen at import, and keyed on the edition, so that
+    moving CURRENT_EDITION forward actually moves records out of the roster. The
+    partition is a pure function of (records, edition, window) -- the caches are
+    read-only views, because an lru_cache handing out a mutable dict is a global
+    waiting to be edited by accident.
+    """
+    current = {u: r for u, r in _BY_UNITID.items()
+               if _edition_start(current_edition) - _edition_start(r["cds_year"]) <= stale_after}
+    stale = {u: r for u, r in _BY_UNITID.items() if u not in current}
+    return MappingProxyType(current), MappingProxyType(stale)
+
+
+def _current():
+    """Records still inside the staleness window, as a read-only mapping."""
+    return _partition(CURRENT_EDITION, STALE_AFTER_EDITIONS)[0]
+
+
+def _stale():
+    """Records that have aged out and now read as `unknown`."""
+    return _partition(CURRENT_EDITION, STALE_AFTER_EDITIONS)[1]
+
+
+def need_only_unitids() -> frozenset[int]:
+    """UNITIDs currently reported as having answered zero on H2A line n."""
+    return frozenset(u for u, r in _current().items() if r["policy"] == NEED_ONLY)
+
+
+def awards_merit_unitids() -> frozenset[int]:
+    """UNITIDs currently reported as having answered more than zero on H2A line n."""
+    return frozenset(u for u, r in _current().items() if r["policy"] == AWARDS_MERIT)
 
 
 def merit_policy(unitids: pd.Series) -> pd.Series:
     """Map UNITID -> policy value. Unverified or stale is `unknown`."""
     return pd.Series(
-        [_CURRENT.get(u, {}).get("policy", UNKNOWN) for u in unitids],
+        [_current().get(u, {}).get("policy", UNKNOWN) for u in unitids],
         index=unitids.index, dtype="object",
     )
 
@@ -304,7 +342,7 @@ def merit_policy_year(unitids: pd.Series) -> pd.Series:
     cannot show is a verdict the user has to take on trust.
     """
     return pd.Series(
-        [_CURRENT.get(u, {}).get("cds_year", "") for u in unitids],
+        [_current().get(u, {}).get("cds_year", "") for u in unitids],
         index=unitids.index, dtype="object",
     )
 
@@ -316,10 +354,12 @@ def merit_policy_status(unitids: pd.Series) -> pd.Series:
     H2A readably is a different statement from one nobody has looked at, and the
     difference is the whole basis for reporting coverage honestly.
     """
+    current, stale = _current(), _stale()
+
     def one(u: int) -> str:
-        if u in _CURRENT:
+        if u in current:
             return RESOLVED
-        if u in _UNVERIFIED_IDS or u in _STALE:
+        if u in _UNVERIFIED_IDS or u in stale:
             return ATTEMPTED_UNRESOLVED
         return NOT_CHECKED
 
@@ -328,7 +368,7 @@ def merit_policy_status(unitids: pd.Series) -> pd.Series:
 
 def provenance(unitid: int) -> dict | None:
     """The full source record for one institution, or None if not currently reported."""
-    r = _CURRENT.get(int(unitid))
+    r = _current().get(int(unitid))
     if r is None:
         return None
     return {**r, "checked_on": CHECKED_ON, "method": METHOD}
@@ -338,7 +378,7 @@ def roster() -> list[dict]:
     """Every currently-reported record, with its provenance. Sorted by policy, name."""
     return [
         {**r, "checked_on": CHECKED_ON, "method": METHOD}
-        for r in sorted(_CURRENT.values(), key=lambda r: (r["policy"], r["name"]))
+        for r in sorted(_current().values(), key=lambda r: (r["policy"], r["name"]))
     ]
 
 
@@ -353,7 +393,7 @@ def unverified() -> list[dict]:
         {"unitid": u, "name": r["name"],
          "reason": f"CDS {r['cds_year']} is outside the staleness window "
                    f"(current edition {CURRENT_EDITION}, {STALE_AFTER_EDITIONS} back)"}
-        for u, r in sorted(_STALE.items())
+        for u, r in sorted(_stale().items())
     ]
     return out
 
@@ -366,12 +406,12 @@ def coverage() -> dict:
     invites being read as completeness.
     """
     return {
-        "verified": len(_CURRENT),
-        "need_only": len(NEED_ONLY_UNITIDS),
-        "awards_merit": len(AWARDS_MERIT_UNITIDS),
-        "attempted": len(_CURRENT) + len(_UNVERIFIED) + len(_STALE),
-        "unresolved": len(_UNVERIFIED) + len(_STALE),
-        "stale": len(_STALE),
+        "verified": len(_current()),
+        "need_only": len(need_only_unitids()),
+        "awards_merit": len(awards_merit_unitids()),
+        "attempted": len(_current()) + len(_UNVERIFIED) + len(_stale()),
+        "unresolved": len(_UNVERIFIED) + len(_stale()),
+        "stale": len(_stale()),
         "checked_on": CHECKED_ON,
         "current_edition": CURRENT_EDITION,
         "stale_after_editions": STALE_AFTER_EDITIONS,

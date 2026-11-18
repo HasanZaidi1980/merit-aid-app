@@ -60,11 +60,26 @@ the same denominator. Ours is 0.2942. See `FORMULAS.md` §3.
 
 ### `GET /api/colleges`
 Ranked shortlist. Query params (all observed):
-- `max_net_price` (e.g. `25000`)
+- `max_net_price` (e.g. `25000`) — must be ≥ 0
 - `mgi_at_least_median` (`true`/`false`)
-- `top_n` (e.g. `20`)
+- `top_n` (e.g. `20`) — must be 1–2000
 - `exclude_flagged` (`true`/`false`)
 - `exclude_no_merit` (`true`/`false`) — **added**, defaults `false`
+
+> **Validation added 2026-11-18 (Phase 6).** Bounds and unknown-parameter rejection.
+> This changes responses to *invalid* requests only; every valid request documented
+> here is unaffected, and the frontend sends exactly these five names.
+>
+> | Request | Was | Now |
+> |---|---|---|
+> | `top_n=-1` | 200 with **n−1** colleges — `DataFrame.head(-1)` drops the last row | 422 |
+> | `top_n=0` | 200 with the **whole dataset** — `if top_n:` is false at 0 | 422 |
+> | `top_n=99999`, `max_net_price=-5` | 200 | 422 |
+> | `max_netprice=60000` (any unknown name) | 200, ignored, default-filtered list | 400 listing the five accepted names |
+>
+> A 200 carrying a ranking that answers a different question than the one asked is
+> the same class of error as a label overstating its data, so these are 4xx now.
+> An **empty** result stays a 200: `{"count": 0, "colleges": []}` is an answer.
 
 Each college row has these 27 fields:
 ```

@@ -22,16 +22,16 @@ owning doc when a fact changes.
 
 | Area | State | Notes |
 |---|---|---|
-| Version control | ✅ Done | `main` pushed to GitHub. 5 commits. |
+| Version control | ✅ Done | `main` pushed to GitHub, protected, with CI on every push. |
 | Runs locally | ✅ Done | Docker (`docker compose up --build`) and direct (uvicorn + vite). |
-| Backend API | ✅ Working | 5 endpoints, 25-field rows. The 2 RAG endpoints were removed — see below. |
+| Backend API | ✅ Working | 5 endpoints, 27-field rows, bounded query params, 503 with a reason when the dataset is absent. The 2 RAG endpoints were removed — see below. |
 | Frontend | ✅ Working | 5 charts, sortable table, CSV export, education section. RAG panel removed. |
 | RAG / AI | 🗑️ **Removed 2026-11-17** | It ran on fabricated data. `IC2022Mission.csv` was sample-generator output sitting among the real IPEDS files; IPEDS has published no mission file since 2007. |
 | Scoring logic | ✅ Validated on real data | 10 issues resolved + tested; **none open** (see `PROJECT_BRIEF.md` §6). Formulas in `FORMULAS.md`. |
 | Merit vs need-based aid | ✅ CDS-sourced across the shortlist | The 26-college hand roster was **wrong for 5 of them**; now read from each college's own CDS H2A with provenance, a year, and an expiry. **Default top 50: 50 attempted, 23 resolved**; 24 of 1,907 dataset-wide. A full crawl was measured at ~38% and rejected — see Phase 4. |
-| Tests | ⚠️ Partial | 40 tests over scoring, flags, net-price coalescing, COA basis, rate scales, weights, merit policy, the year on the row and verdict staleness. No endpoint tests. |
+| Tests | ✅ 88 tests, in CI | Scoring, the flag split, net-price coalescing, COA basis, rate scales, weights, merit policy, the year on the row, verdict expiry — plus (Phase 6) the real `data.py` read path against a synthetic fixture dataset, all five endpoints via `TestClient`, and a smoke test that boots uvicorn. `ruff` + `pytest` + smoke run on every push. |
 | **Real data** | ✅ **Installed & validated** | Real IPEDS 2022-23: 1,907 colleges (726 public / 1,095 private nonprofit / 86 for-profit). 5 of 5 reference metrics match. |
-| Error handling | ⚠️ Partial | `/api/meta` failure now shows a real error with a retry. `getColleges` and the empty state are still silent. |
+| Error handling | ⚠️ Partial | Server side is done: bad params get a 4xx naming them, a missing dataset a 503 naming the file. In the UI, `/api/meta` failure shows a real error with a retry; `getColleges` and the empty state are still silent (Phase 5). |
 | Deployment | ❌ Not started | Terraform + K8s manifests exist, never applied. |
 
 **One-line summary:** the app runs on real, validated IPEDS data and produces defensible
@@ -56,7 +56,11 @@ Confirmed by running it, not by reading it:
 - The flag split behaves as designed. Against a fixture with realistic missingness,
   **11 of the top 20 colleges were missing SAT data and were correctly kept** — under
   the previous `RISK_FLAGS` behaviour all 11 would have been silently dropped.
-- `pytest` — 40 passing.
+- `pytest` — **88 passing**, from a clean checkout with no `backend/data/` present.
+- `ruff check .` — clean.
+- `python scripts/smoke_test.py` — real uvicorn over generated sample data: boots,
+  answers all three endpoints, refuses `top_n=-1` with a 422 and an unknown filter
+  with a 400.
 - Frontend builds clean (`npm run build`).
 
 ## 3. What is unverified or missing
@@ -440,20 +444,122 @@ Do this before deploying. The failure it prevents is the failure most likely to 
       `sentence-transformers`, or soften the similarity threshold and say "no strong
       match" instead of "none found".
 - [ ] Surface the retrieval mode (embeddings vs TF-IDF) in the UI.
-- [ ] Input validation on `/api/colleges` — helpful 4xx messages, not 500s.
+- [x] ~~Input validation on `/api/colleges`~~ — done in Phase 6, where the tests that
+      found the defects live: bounded `top_n` / `max_net_price`, unknown parameters
+      rejected, and a 503 that names the missing file instead of a numpy 500.
 - [ ] Consider code-splitting the 4.8 MB bundle (1.4 MB gzipped, nearly all Plotly).
 
 **Done when:** killing the backend produces a visible, recoverable error in the UI.
 
-### Phase 6 — Extend test coverage
+### Phase 6 — Extend test coverage ✅ *closed 2026-11-18*
 
-- [ ] `data.py`: load, merge, clean, sentinel handling, empty-result handling.
-- [ ] Endpoint tests via `TestClient`, including malformed query params.
-- [ ] RAG endpoint with and without an API key.
-- [ ] Smoke test that boots the stack and hits `/api/health`, `/api/meta`, `/api/colleges`.
-- [ ] CI (lint + tests on push).
+**40 tests to 88.** The gap this phase closed was not breadth, it was that the suite
+was *entirely* in-memory: every test built a frame and called `add_metrics` directly,
+so `data.py` — the code that reads six CSVs off disk, filters the universe, coalesces
+the public/private column pairs, converts sentinels, reconstructs COA and decides
+which colleges are dropped — had never run under test. It produced every number the
+app displays and was the least covered file in the project.
 
-**Done when:** `pytest` covers every module and runs in CI.
+- [x] **`data.py`: load, merge, clean, sentinel handling, empty-result handling**
+      *(2026-11-18)*. `tests/test_data_pipeline.py`, 18 tests, run against a
+      committed synthetic fixture dataset at `backend/tests/fixtures/` — **not**
+      `backend/data/`, which stays gitignored and real-data-only.
+
+      `ipeds_synthetic/` is 13 invented institutions (UNITID 999001+, every name
+      prefixed `ZZ SYNTHETIC`, real IPEDS column names), one per code path: a public
+      and a private row, `-2` sentinels, a blank graduation rate, a row with no
+      tuition, a two-year college, a non-degree-granting one, a row absent from SFA,
+      a grant larger than the whole cost of attendance, a missing band grant, an
+      unmapped `CONTROL`, and a suppressed grant. Eight of the thirteen survive
+      cleaning; the five drops are the point. `ipeds_all_dropped/` is the
+      empty-result case.
+
+      The fixture is test input and never a fallback — the app has no code path that
+      reads it, and `test_the_fixtures_are_never_the_app_default` asserts both that
+      the default `DATA_DIR` does not point there and that every institution name
+      announces itself as synthetic. Serving invented colleges in place of a broken
+      deployment is the worst failure this app could have.
+
+- [x] **Endpoint tests via `TestClient`, including malformed query params**
+      *(2026-11-18)*. `tests/test_api.py`, 27 tests over all five endpoints, the
+      27-field row schema, JSON validity, and every way a caller can get
+      `/api/colleges` wrong. It found three defects, all of them *wrong answer
+      returned as an answer* rather than crashes:
+
+      | Request | Was | Now |
+      |---|---|---|
+      | `top_n=-1` | 200 with **n−1** colleges (`head(-1)` drops the last row) | 422 |
+      | `top_n=0` | 200 with the **whole dataset** (`if top_n:` is false at 0) | 422 |
+      | `max_netprice=60000` | 200, parameter ignored, default-filtered list returned | 400 naming it |
+      | missing dataset | 500 from `np.nanmin` inside `meta()` | 503 naming the file and directory |
+
+      The first three are the same error as a label overstating its data: a request
+      nobody could answer, answered plausibly. Bounds are now declared
+      (`top_n` 1–2000, `max_net_price` ≥ 0) and unknown parameters are rejected
+      rather than ignored. This overlaps the input-validation item in Phase 5; it was
+      done here because these are the tests that found it, and a bound with no test
+      is a bound nobody maintains.
+
+- [x] **Dataset failure is diagnosable from outside the container** *(2026-11-18)*.
+      New `data.DatasetUnavailable`, raised when a file is missing **or** when files
+      are found and no row survives cleaning, answered by the API as 503 with the
+      reason. `/api/health` stays 200 — the process is fine, the data is not. This is
+      the exact state a pod boots into with the `emptyDir` mount still in
+      `deploy/k8s/backend.yaml`, so `curl /api/meta` now diagnoses Phase 8's first
+      blocker without shell access.
+
+- [x] ~~**RAG endpoint with and without an API key.**~~ Moot — `/api/rag/*` was
+      removed in Phase 3.5 because its only data source was generated text. Replaced
+      by `test_the_removed_rag_endpoints_stay_removed`, which asserts both routes
+      still 404: the useful remaining test is that fabricated content cannot come
+      back.
+
+- [x] **Smoke test that boots the stack** *(2026-11-18)*. `scripts/smoke_test.py`
+      generates sample data into a throwaway directory, launches real uvicorn, waits
+      on `/api/health`, then checks `/api/meta`, `/api/colleges`, and that bad input
+      is refused by a real server rather than only by the in-process test client. It
+      writes nothing to `backend/data/`. `make_sample_data.py` now takes an output
+      directory (argument, else `$DATA_DIR`, else `../data`) so that is possible.
+
+- [x] **CI (lint + tests on push)** *(2026-11-18)*. `.github/workflows/ci.yml`:
+      `ruff check` + `pytest` + the smoke test on Python 3.12, plus a frontend
+      `npm ci && npm run build` job, on every push and pull request. Needs **no
+      dataset** (the suite is fixture-based) and **no secrets** — the RAG panel was
+      the only thing that ever wanted `ANTHROPIC_API_KEY`, and a public repo with no
+      secrets in CI has nothing for a workflow to leak. Lint config in
+      `backend/ruff.toml`.
+
+- [x] **Verdict expiry is covered, not merely dormant** *(2026-11-18)*. Phase 4's
+      staleness rule had never actually expired anything — nothing on the roster is
+      stale, so every stale branch was unreached code that would first run on the day
+      a human bumps `CURRENT_EDITION`, which is exactly when a regression ships.
+      `is_current()` now takes the edition as an argument and the partition is
+      computed per edition instead of frozen at import, so
+      `test_expiry_fires_when_the_edition_advances` moves the edition forward and
+      watches records leave the roster, revert to `unknown`, become
+      `attempted_unresolved`, and gain a generated reason — then moves it back and
+      asserts they return. Expiry is a function of a declared edition, not a
+      mutation, and `test_no_verdict_depends_on_the_clock` asserts the module reads
+      no clock at all, so no result in this suite changes overnight.
+
+**Done when** *(redefined 2026-11-18)*: **lint and the full suite run in CI on every
+push, and the read path, the five endpoints and a booted server are each covered by
+tests that assert behaviour.** **Met.**
+
+**Why "covers every module" was replaced, recorded so it is a decision and not a
+lowered bar:** the old wording invites a coverage percentage as the target, and a
+percentage is satisfiable by tests that execute lines without asserting anything
+about them. The evidence is local: the five false `need_only` labels — the most
+serious defect this project has had — were in a module that line coverage would have
+called fully exercised. They were caught by checking a claim against its source.
+Likewise `top_n=-1` was *always* covered code; what was missing was a test that
+asked what it returned. So the bar is which failures the suite would catch, and the
+record of that is which real defects each test file was written from.
+
+**Owner action, not a repo change:** `main` is protected, but CI is not yet a
+**required status check**. Until someone enables that in GitHub → Settings → Branches
+→ branch protection for `main` → *Require status checks to pass* → `backend` and
+`frontend`, a red build still merges. Nothing in this repository can turn that on.
 
 ### Phase 7 — Upgrade to IPEDS 2023-24 🔒 *blocked by Phase 2*
 
