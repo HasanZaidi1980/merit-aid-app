@@ -1,4 +1,18 @@
-# Google Cloud Load Balancer via GKE Ingress. Routes / to frontend, /api to backend.
+# Google Cloud Load Balancer via GKE Ingress. Routes / to the frontend and /api to
+# the backend.
+#
+# Yes, `kubernetes.io/ingress.class` is the annotation Kubernetes deprecated in 1.18,
+# and no, `ingressClassName: gce` does not work here. Checked on this cluster
+# (GKE 1.36.4-gke.2377000, 2026-11-20): `kubectl get ingressclass` returns "No
+# resources found". GKE runs its ingress controller on the master and keys off this
+# annotation; with `ingressClassName` instead, the Ingress sat for 21 minutes with no
+# address and no events at all -- the controller never looked at it. The tell was the
+# empty Events list, not an error.
+#
+# The health checks this Ingress uses are NOT defined here: they come from the
+# BackendConfig attached to each Service (/api/health for the backend, / for the
+# frontend). That is the fix for the 502 on /api/* -- the default is a probe of `/`
+# on a node port, which the backend does not serve.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

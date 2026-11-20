@@ -1,23 +1,75 @@
+# Frontend: the built Vite bundle served by nginx, which also proxies /api to the
+# backend Service inside the cluster.
+#
+# Same two deploy-level fixes as the backend: the NEG annotation so the load
+# balancer health-checks pods rather than a node port, and a second replica pinned
+# to a different node, because these are Spot nodes.
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: frontend-hc
+spec:
+  healthCheck:
+    type: HTTP
+    requestPath: /
+    port: 80
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: frontend }
+metadata:
+  name: frontend
 spec:
-  replicas: 1
+  replicas: 2
+  # maxSurge: 0 is required, not a preference. Pod anti-affinity is `required` and
+  # there are exactly as many replicas as nodes, so a surge pod has nowhere to go:
+  # a default rollout (maxSurge 25%) deadlocks with the new ReplicaSet's pod Pending
+  # on "didn't match pod anti-affinity rules" until it is manually unstuck. Observed
+  # on 2026-11-20. Replacing instead of surging dips capacity to one replica for a
+  # few seconds per deploy, which is the right trade on a 2-node cluster.
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector: { matchLabels: { app: frontend } }
   template:
     metadata: { labels: { app: frontend } }
     spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: frontend }
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: frontend
-          image: REGION-docker.pkg.dev/PROJECT_ID/merit-aid/frontend:latest
+          image: us-central1-docker.pkg.dev/merit-aid-app/merit-aid/frontend:latest
           ports: [{ containerPort: 80 }]
+          # Static files behind nginx: ready as soon as it binds. The probe exists so
+          # the LB has a real target, and so a crashed nginx is replaced.
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: 80 }
+            periodSeconds: 20
+            failureThreshold: 3
+          # Measured: 1m CPU, 3Mi. It is nginx serving static files.
           resources:
-            requests: { cpu: "50m", memory: "64Mi" }
+            requests: { cpu: "25m", memory: "32Mi" }
             limits:   { cpu: "250m", memory: "128Mi" }
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: frontend }
+metadata:
+  name: frontend
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default": "frontend-hc"}'
 spec:
+  type: ClusterIP
   selector: { app: frontend }
   ports: [{ port: 80, targetPort: 80 }]

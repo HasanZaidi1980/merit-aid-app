@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/HasanZaidi1980/merit-aid-app/actions/workflows/ci.yml/badge.svg)](https://github.com/HasanZaidi1980/merit-aid-app/actions/workflows/ci.yml)
 
+**Live:** http://136.81.186.158/ — real IPEDS 2022-23 data, 1,907 colleges, running on GKE.
+
 > **What this is:** a from-scratch, working rebuild that matches the *observable behavior*
 > of the live app at `http://136.68.78.253/` — same API endpoints, same data
 > schema, same charts, same scoring. It is **NOT** a copy of your friend's source code

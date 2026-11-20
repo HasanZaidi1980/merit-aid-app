@@ -1,5 +1,6 @@
 """FastAPI app. Mirrors the endpoints observed on the live site."""
 import math
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +8,30 @@ from fastapi.responses import JSONResponse
 
 from . import config, data, education, merit_policy
 
-app = FastAPI(title="Merit Aid Finder (reconstruction)", version="1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Build the dataset once at boot so the first request isn't slow.
+
+    A lifespan handler, not the `@app.on_event("startup")` this used to be: that API
+    has been deprecated since FastAPI 0.93 and emits a DeprecationWarning on every
+    boot, including in CI.
+
+    The try/except is load-bearing in the cluster. The pod is useless without data,
+    but crashing at import gives Kubernetes a CrashLoopBackOff and no HTTP answer at
+    all, whereas booting lets /api/health stay 200 while /api/meta returns a 503 that
+    names the missing file -- which is how a broken data mount gets diagnosed from
+    outside the pod.
+    """
+    try:
+        data.build_dataset()
+    except Exception as e:  # never let warmup crash the server
+        print(f"[warmup] skipped: {e}")
+    yield
+
+
+app = FastAPI(title="Merit Aid Finder (reconstruction)", version="1.0",
+              lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
@@ -123,12 +147,3 @@ def _dataset_unavailable(request: Request, exc: data.DatasetUnavailable):
     `curl /api/meta` diagnoses it without shell access to the container.
     """
     return JSONResponse(status_code=503, content={"detail": str(exc)})
-
-
-@app.on_event("startup")
-def _warmup():
-    """Build the dataset once at boot so the first request isn't slow."""
-    try:
-        data.build_dataset()
-    except Exception as e:  # never let warmup crash the server
-        print(f"[warmup] skipped: {e}")

@@ -1,8 +1,11 @@
 # --- build stage ---
 FROM node:20-alpine AS build
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+# Lockfile + `npm ci`, not `npm install`: the same resolution CI builds and tests
+# against, so the image cannot pick up a different transitive version than the one
+# the green build used.
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
 RUN npm run build
 

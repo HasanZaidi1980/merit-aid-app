@@ -1,38 +1,146 @@
+# Backend: FastAPI + pandas over the six IPEDS CSVs.
+#
+# Four things here were Phase 8 blockers, all fixed in this file:
+#
+#   1. The data. The image ships no CSVs (backend/data/ is gitignored and always
+#      will be), and the old `emptyDir` was mounted empty with nothing to fill it --
+#      so the pod booted with no dataset at all. An init container now copies the
+#      six files from the GCS bucket on every pod start.
+#   2. `cloud.google.com/neg` on the Service. Without it GKE Ingress load-balances
+#      through the node port and health-checks `/` on the node, which FastAPI does
+#      not serve -- the 502 on /api/* observed on the reference deployment.
+#   3. A startupProbe, so a slow first dataset build is not killed by livenessProbe
+#      before it ever becomes ready.
+#   4. replicas: 2 with required pod anti-affinity. These are Spot nodes and can be
+#      preempted at any moment; two replicas on the same node would be preempted
+#      together and buy nothing.
+#
+# Why emptyDir is still the right volume, and not a PVC. A ReadWriteOnce persistent
+# disk attaches to one node at a time, so it would make the two replicas
+# mutually exclusive -- the second pod would sit Pending forever. The bucket is the
+# durable copy; each pod gets a private scratch copy of the 21 MB dataset at start. A
+# pod restart therefore cannot lose the data: it re-fetches it.
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: backend-hc
+spec:
+  healthCheck:
+    type: HTTP
+    requestPath: /api/health
+    port: 8000
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: backend }
+metadata:
+  name: backend
 spec:
-  replicas: 1
+  replicas: 2
+  # maxSurge: 0 is required, not a preference. Pod anti-affinity is `required` and
+  # there are exactly as many replicas as nodes, so a surge pod has nowhere to go:
+  # a default rollout (maxSurge 25%) deadlocks with the new ReplicaSet's pod Pending
+  # on "didn't match pod anti-affinity rules" until it is manually unstuck. Observed
+  # on 2026-11-20. Replacing instead of surging dips capacity to one replica for a
+  # few seconds per deploy, which is the right trade on a 2-node cluster.
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector: { matchLabels: { app: backend } }
   template:
     metadata: { labels: { app: backend } }
     spec:
+      affinity:
+        podAntiAffinity:
+          # Required, not preferred: on a 2-node Spot pool, "preferred" would
+          # happily co-locate both replicas and a single preemption would take the
+          # whole backend down.
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: backend }
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        # The dataset is not in the image. It comes from the bucket, every start.
+        # If the copy fails or lands short, the init container exits non-zero and the
+        # pod never serves -- better than a pod that answers with a 503 nobody reads.
+        - name: fetch-ipeds-data
+          # :slim, not :stable -- the same gcloud, roughly a third of the
+          # download. This image is pulled on every pod start, so its size is
+          # restart latency, and on Spot nodes restart latency is what an eviction
+          # actually costs you.
+          image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              gcloud storage cp "gs://${BUCKET}/*.csv" /data/
+              n=$(ls -1 /data/*.csv | wc -l)
+              echo "copied ${n} CSV files from gs://${BUCKET}"
+              test "${n}" -eq 6 || {
+                echo "expected 6 IPEDS CSVs, found ${n}:" >&2
+                ls -l /data >&2
+                exit 1
+              }
+          env:
+            - name: BUCKET
+              value: merit-aid-ipeds-2026
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
       containers:
         - name: backend
-          image: REGION-docker.pkg.dev/PROJECT_ID/merit-aid/backend:latest
+          image: us-central1-docker.pkg.dev/merit-aid-app/merit-aid/backend:latest
           ports: [{ containerPort: 8000 }]
           env:
             - name: DATA_DIR
               value: /data
           volumeMounts:
-            - { name: data, mountPath: /data }
+            - { name: data, mountPath: /data, readOnly: true }
+          # Boot builds the whole dataset (read, merge, clean, score 1,907 rows), so
+          # give it room to finish before anything judges it. 30 x 2s = 60s.
+          startupProbe:
+            httpGet: { path: /api/health, port: 8000 }
+            periodSeconds: 2
+            failureThreshold: 30
           readinessProbe:
             httpGet: { path: /api/health, port: 8000 }
-            initialDelaySeconds: 10
+            periodSeconds: 10
           livenessProbe:
             httpGet: { path: /api/health, port: 8000 }
-            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          # Measured, not guessed. `kubectl top` on this pod serving the real
+          # 1,907-row dataset reads 3m CPU and 81Mi. The original 250m/512Mi were
+          # ~80x and ~6x the real figures, and on a shared-core node (940m
+          # allocatable, ~680m of it already requested by GKE's own system pods)
+          # that over-request is what left the second replica Pending -- first on
+          # memory, then on CPU. Requests are a scheduling floor, not a cap: the
+          # limits below still allow a full core and 768Mi for the boot-time
+          # dataset build and for bursts.
           resources:
-            requests: { cpu: "250m", memory: "512Mi" }
-            limits:   { cpu: "1",    memory: "1Gi" }
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "1",    memory: "768Mi" }
       volumes:
+        # Per-pod scratch copy, refilled by the init container on every start.
         - name: data
-          emptyDir: {}          # or a CSI volume synced from the GCS bucket
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: backend }
+metadata:
+  name: backend
+  annotations:
+    # Container-native load balancing: the LB sends traffic to pod IPs and
+    # health-checks the pods, instead of hitting a node port and probing `/`.
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default": "backend-hc"}'
 spec:
+  type: ClusterIP
   selector: { app: backend }
   ports: [{ port: 8000, targetPort: 8000 }]
-

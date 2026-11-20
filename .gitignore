@@ -18,3 +18,14 @@ index/
 # sitting anywhere else is not, and that zip is how the dataset gets handed to a
 # new teammate (HANDOFF.md step 2) -- so it is routinely in the working tree.
 *.zip
+# Terraform. State is not source code: it records live infrastructure, including
+# the cluster's CA certificate and resource IDs, and a saved plan file embeds the
+# whole state as well. `.terraform/` is 120 MB of downloaded provider binaries.
+# The lock file IS committed on purpose -- it pins the provider version that was
+# actually applied.
+deploy/terraform/.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+tfplan-*
+crash.log

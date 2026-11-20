@@ -32,14 +32,15 @@ owning doc when a fact changes.
 | Tests | ✅ 88 tests, in CI | Scoring, the flag split, net-price coalescing, COA basis, rate scales, weights, merit policy, the year on the row, verdict expiry — plus (Phase 6) the real `data.py` read path against a synthetic fixture dataset, all five endpoints via `TestClient`, and a smoke test that boots uvicorn. `ruff` + `pytest` + smoke run on every push. |
 | **Real data** | ✅ **Installed & validated** | Real IPEDS 2022-23: 1,907 colleges (726 public / 1,095 private nonprofit / 86 for-profit). 5 of 5 reference metrics match. |
 | Error handling | ⚠️ Partial | Server side is done: bad params get a 4xx naming them, a missing dataset a 503 naming the file. In the UI, `/api/meta` failure shows a real error with a retry; `getColleges` and the empty state are still silent (Phase 5). |
-| Deployment | ❌ Not started | Terraform + K8s manifests exist, never applied. |
+| Deployment | ✅ **Live 2026-11-20** | `http://136.81.186.158/` — GKE zonal cluster, 2 Spot e2-medium nodes, 2 replicas per service on separate nodes, data fetched from GCS on pod start. ~$3.50-4.00/day. Teardown cycle in `DEPLOYMENT.md`; **still running for the demo**. |
 
 **One-line summary:** the app runs on real, validated IPEDS data and produces defensible
 rankings — Stanford #1 at $77,662 sticker against a $7,332 net price for a mid-income
 family, which is exactly the thesis. The numbers are right; the word "merit" on them was
 not, and is now corrected in the UI and sourced per-institution from each college's own
 Common Data Set (Phase 4). What remains is
-a UI that still fails silently on `getColleges`, and the deploy.
+a UI that still fails silently on `getColleges`. The deploy is done: it has been live
+on GCP since 2026-11-20.
 
 ---
 
@@ -56,6 +57,12 @@ Confirmed by running it, not by reading it:
 - The flag split behaves as designed. Against a fixture with realistic missingness,
   **11 of the top 20 colleges were missing SAT data and were correctly kept** — under
   the previous `RISK_FLAGS` behaviour all 11 would have been silently dropped.
+- **Deployed and curled.** `http://136.81.186.158/api/health` → `{"ok":true}` in
+  115 ms; `/api/meta` → 1,907 colleges, net price $2,200-$63,997, SAT coverage 985;
+  `/api/colleges?top_n=5` → 27 fields a row, Stanford #1 at a $7,332 net price. The
+  frontend root serves the built bundle (HTTP 200, `text/html`).
+- **A deleted backend pod comes back serving data** — the replacement re-fetched all
+  six CSVs from the bucket and reported the same 1907 / 2200 / 63997 / 985.
 - `pytest` — **88 passing**, from a clean checkout with no `backend/data/` present.
 - `ruff check .` — clean.
 - `python scripts/smoke_test.py` — real uvicorn over generated sample data: boots,
@@ -77,10 +84,13 @@ Confirmed by running it, not by reading it:
 4. ~~**RAG runs on TF-IDF.**~~ Moot — the whole feature was removed in Phase 3.5.
    `IC2022Mission.csv` was sample-generator output, and IPEDS has published no
    mission file since 2007 (`IC2022Mission.zip` → 404, `IC2007Mission.zip` → 200).
-5. **Thin test coverage.** Nothing covers `data.py` (load, merge, clean, sentinels) or
-   the endpoints.
-6. **Deployment never exercised.** See §6 for the 502 hypothesis that should be fixed
-   before the first deploy, not after.
+5. ~~**Thin test coverage.**~~ Closed in Phase 6: `data.py` and all five endpoints are
+   covered, 88 tests, running in CI on every push.
+6. ~~**Deployment never exercised.**~~ Closed in Phase 8 — deployed 2026-11-20 and
+   verified live. The 502 hypothesis was right about the cause and incomplete about the
+   fix: the NEG annotation is necessary but the health check also has to be pointed at
+   `/api/health` by a BackendConfig, and the cluster has to be VPC-native for a NEG to
+   exist at all.
 
 ---
 
@@ -556,32 +566,113 @@ Likewise `top_n=-1` was *always* covered code; what was missing was a test that
 asked what it returned. So the bar is which failures the suite would catch, and the
 record of that is which real defects each test file was written from.
 
-**Owner action, not a repo change:** `main` is protected, but CI is not yet a
-**required status check**. Until someone enables that in GitHub → Settings → Branches
-→ branch protection for `main` → *Require status checks to pass* → `backend` and
-`frontend`, a red build still merges. Nothing in this repository can turn that on.
+**Owner action — done 2026-11-20.** CI is now a **required status check** on `main`.
+Enabled in GitHub → Settings → Branches and verified in the UI, not taken on report:
+*Require status checks to pass before merging* with both `backend (lint, tests,
+smoke)` and `frontend (build)` listed as required and accepting updates from GitHub
+Actions, plus *Require branches to be up to date*, *Require a pull request before
+merging*, and *Require approvals: 1*. A red build now blocks a merge. Owner bypass
+stays off, so direct pushes to `main` by the owner are unaffected.
+
+Two things remain open here and are fine to leave: the `pull_request` trigger has
+still never fired, because no pull request has ever existed on this repo, and the
+frontend has no tests beyond the build.
 
 ### Phase 7 — Upgrade to IPEDS 2023-24 🔒 *blocked by Phase 2*
 
 Full plan in §6 below.
 
-### Phase 8 — Deploy to GCP
+### Phase 8 — Deploy to GCP ✅ *live 2026-11-20*
 
-Fix the manifests first — they contain the probable cause of the reference app's 502s.
+**Running at `http://136.81.186.158/`.** Project `merit-aid-app`, zonal cluster
+`merit-aid-cluster` in `us-central1-a`, two Spot `e2-medium` nodes, two replicas of
+each service behind a Google Cloud load balancer. Every claim below was checked with
+`curl`, `kubectl` or `gcloud` against the running cluster, not read off a manifest.
 
-- [ ] **`emptyDir` for data.** `deploy/k8s/backend.yaml` mounts an empty volume, so the
-      pod boots with no CSVs. Use a GCS CSI mount or an init container.
-- [ ] **No NEG annotation** on the backend Service, so GKE Ingress health-checks `/` on
-      the node port — which FastAPI doesn't serve. Add
-      `cloud.google.com/neg: '{"ingress": true}'`, or a BackendConfig pointing the health
-      check at `/api/health`.
-- [ ] Add a `startupProbe`; move off the deprecated `@app.on_event("startup")` to a
-      lifespan handler.
-- [ ] Consider `replicas: 2` so a restart isn't an outage.
-- [ ] Then follow `DEPLOYMENT.md`: Terraform → upload data → secret → build/push → apply.
-- [ ] **Tear down when the demo is over.** GKE + a load balancer bill continuously.
+- [x] **`emptyDir` for data — fixed with an init container** *(2026-11-20)*. The
+      blocker was never the volume type: nothing populated the volume at all, because
+      `backend/data/` is gitignored and `backend/.dockerignore` excludes `data/`, so
+      neither the repo nor the image carries the dataset. Each pod now copies the six
+      CSVs from `gs://merit-aid-ipeds-2026/` on start and fails its init if it does
+      not get exactly six.
+
+      `emptyDir` is kept deliberately. A ReadWriteOnce PVC attaches to one node at a
+      time, which would make the two replicas mutually exclusive — the second pod
+      would sit Pending forever. The bucket is the durable copy, so a restart cannot
+      lose data: it re-fetches it. Verified by deleting a running pod — the
+      replacement fetched all six files (20.5 MiB at 53.4 MiB/s) and served
+      `colleges_in_dataset 1907 | net_price 2200-63997 | sat_coverage 985`, the same
+      four structural targets the suite pins.
+
+- [x] **NEG annotation + BackendConfig** *(2026-11-20)*. Proven at the Google layer
+      rather than inferred: `gcloud compute health-checks describe` on the backend NEG
+      reports `requestPath: /api/health, port: 8000, USE_FIXED_PORT` — not `/` on a
+      node port — and `gcloud compute backend-services get-health` reports
+      `HEALTHY;HEALTHY` for both endpoints. No 502 was observed at any point.
+
+- [x] **`startupProbe` added, and `@app.on_event("startup")` replaced with a lifespan
+      handler** *(2026-11-20)*. The deprecation warning is gone from the test run (3
+      warnings to 1). The handler still swallows a dataset failure on purpose: a pod
+      that crashes at import gives Kubernetes a CrashLoopBackOff and no HTTP answer,
+      where booting lets `/api/health` stay 200 while `/api/meta` returns the 503 that
+      names the missing file.
+
+- [x] **`replicas: 2`, and the second replica actually buys something** *(2026-11-20)*.
+      Required pod anti-affinity on `kubernetes.io/hostname`, verified with
+      `kubectl get pods -o wide`: the two backends sit on different nodes, as do the
+      two frontends. On Spot nodes, two replicas on one node would be preempted
+      together.
+
+- [x] **Deployed via `DEPLOYMENT.md`** — which no longer has a secret step. The RAG
+      panel was the only consumer of `ANTHROPIC_API_KEY`; the deploy path now has no
+      secret at all, and `secretmanager.googleapis.com` was dropped from Terraform.
+      There was no dangling `secretKeyRef` in the manifests to clean up.
+
+- [ ] **Tear down when the demo is over.** Still running on purpose. The cycle,
+      the order and the reason billing must never be switched off are written into
+      `DEPLOYMENT.md`.
 
 **Done when:** the external IP serves the app and `/api/*` survives a pod restart.
+**Met**, both verified live.
+
+**Four first-apply surprises, none of them in the recorded blocker list.** This is
+what the second day of the estimate was for:
+
+1. **Terraform's own dependency graph.** `google_compute_network` had no `depends_on`
+      the API-enablement resources, so the first apply raced them and died with
+      "Compute Engine API has not been used in project merit-aid-app before or it is
+      disabled". Fixed in `main.tf`.
+2. **`e2-small` could not run this at all.** Both second replicas sat Pending with
+      "0/2 nodes are available: 2 Insufficient memory": an e2-small offers 1.33 GiB
+      allocatable and GKE's own system DaemonSets request ~810 MiB of it. Moving to
+      `e2-medium` cleared memory and exposed the real constraint — a *shared-core* E2
+      node reports **940m allocatable CPU regardless of size**, of which system pods
+      request ~680m.
+3. **The requests were the actual bug.** `kubectl top` shows the backend using **3m
+      CPU and 81Mi** while serving the real dataset, against requests of 250m/512Mi —
+      ~80x and ~6x over. Requests are now set from that measurement (100m/256Mi, with
+      limits left at 1 CPU / 768Mi for the boot-time build). The single-replica
+      blocker and the node size turned out to be the same blocker, and neither was
+      really about nodes.
+4. **`ingressClassName: gce` does not work on GKE.** Modernising away from the
+      deprecated `kubernetes.io/ingress.class` annotation left the Ingress sitting for
+      21 minutes with no address and — the tell — *no events at all*. This cluster has
+      no IngressClass objects whatsoever (`kubectl get ingressclass` → No resources
+      found); GKE's controller keys off the annotation. Reverted, with the evidence in
+      the file so nobody "fixes" it again.
+
+A fifth, smaller one: with required anti-affinity and replicas == nodes, a default
+rollout deadlocks, because the surge pod has nowhere to be scheduled. Both Deployments
+now set `maxSurge: 0`.
+
+**Cost, from Google's Cloud Billing Catalog API rather than from memory:** the zonal
+cluster management fee is **$0.10/hour** ($73/month) and Spot E2 is $0.012440 per
+vCPU-hour plus $0.001666 per GiB-hour, making two e2-medium nodes $0.038/hour
+($27.90/month). With the load balancer (~$18/month, the one figure not taken from a
+primary source) that is **roughly $3.50-4.00 per day**. No other GKE cluster exists on
+this billing account, so the one-free-zonal-cluster credit ($74.40/month) should apply
+and bring it to roughly $45-50/month — an expectation to confirm against the actual
+bill in 24-48 hours, not a measurement.
 
 ### Phase 9 — Finish
 

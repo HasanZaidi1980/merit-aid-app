@@ -2,9 +2,9 @@
 
 For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next for full architecture, metrics, and task ideas; this doc is just *where things stand right now*. See "Who works on this" below for how the two agents split the work.
 
-## Status: real data, runs locally, not deployed
+## Status: real data, tested, deployed and running on GCP
 
-*Last updated 2026-10-28 @ `ec37a8a`.*
+*Last updated 2026-11-20.*
 
 - **On real IPEDS 2022-23 data.** 1,907 colleges. Validated against the reference
   app's published numbers — 4 of 5 match exactly; the fifth is explained (see below).
@@ -18,9 +18,13 @@ For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next f
 - **`python scripts/smoke_test.py`** boots real uvicorn over generated sample data and
   checks the three endpoints a deployment check would call. Touches nothing in
   `backend/data/`.
-- **Not deployed to GCP.** Nothing pushed to GKE/Artifact Registry. `DEPLOYMENT.md` has
-  the steps; they have not been run. The manifests contain a known bug — see
-  `PROJECT_STATE.md` Phase 8.
+- **Live on GCP at `http://136.81.186.158/`** *(2026-11-20)*. GKE zonal cluster in
+  `us-central1-a`, two Spot `e2-medium` nodes, two replicas of each service on separate
+  nodes, images in Artifact Registry, the six CSVs in `gs://merit-aid-ipeds-2026/` and
+  copied onto each pod at start by an init container. **It is costing roughly
+  $3.50-4.00 a day while it runs** — `DEPLOYMENT.md` has the teardown cycle, which is
+  `terraform destroy`, never a billing change (five-plus projects share that billing
+  account). It is up deliberately for the demo.
 
 ## New to this project? Start here
 
