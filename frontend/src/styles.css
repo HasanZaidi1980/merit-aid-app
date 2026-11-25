@@ -59,6 +59,22 @@ tbody tr:hover { background: #f1f5f9; }
 .fatal p { color: var(--muted); font-size: 13.5px; line-height: 1.6; margin: 0 0 16px; }
 .fatal code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
 
+/* Inline notices where the ranking would be: a request that failed, and a filter
+ * that legitimately matched nothing. These must not look alike -- the whole point of
+ * the Phase 5 fix is that an empty table used to mean either one. Red left border
+ * for "something is wrong", slate for "this is an answer you may not have wanted".
+ */
+.notice { border-left-width: 4px; border-left-style: solid; }
+.notice h3 { margin: 0 0 8px; }
+.notice .cap { margin: 0 0 14px; }
+.notice-error { border-left-color: #c2453b; }
+.notice-empty { border-left-color: #94a3b8; }
+/* The server's own words, quoted. Monospaced because it names files and paths. */
+.notice-detail { margin: 0 0 14px; padding: 10px 12px; background: #f8fafc;
+  border: 1px solid var(--line); border-radius: 8px; color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+  line-height: 1.55; overflow-wrap: anywhere; }
+
 /* --- the inline "?" explain affordance --- */
 .explain { position: relative; display: inline-block; margin-left: 5px; vertical-align: middle; }
 .explain-btn { width: 15px; height: 15px; padding: 0; line-height: 13px; font-size: 10.5px;

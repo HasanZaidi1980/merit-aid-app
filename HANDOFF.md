@@ -4,7 +4,7 @@ For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next f
 
 ## Status: real data, tested, deployed and running on GCP
 
-*Last updated 2026-11-20.*
+*Last updated 2026-11-25.*
 
 - **On real IPEDS 2022-23 data.** 1,907 colleges. Validated against the reference
   app's published numbers — 4 of 5 match exactly; the fifth is explained (see below).
@@ -18,13 +18,17 @@ For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next f
 - **`python scripts/smoke_test.py`** boots real uvicorn over generated sample data and
   checks the three endpoints a deployment check would call. Touches nothing in
   `backend/data/`.
-- **Live on GCP at `http://136.81.186.158/`** *(2026-11-20)*. GKE zonal cluster in
+- **Live on GCP at `http://136.81.186.158/`** *(2026-11-20; address made static 2026-11-25, so a redeploy keeps it)*. GKE zonal cluster in
   `us-central1-a`, two Spot `e2-medium` nodes, two replicas of each service on separate
   nodes, images in Artifact Registry, the six CSVs in `gs://merit-aid-ipeds-2026/` and
   copied onto each pod at start by an init container. **It is costing roughly
   $3.50-4.00 a day while it runs** — `DEPLOYMENT.md` has the teardown cycle, which is
   `terraform destroy`, never a billing change (five-plus projects share that billing
-  account). It is up deliberately for the demo.
+  account). It is up deliberately for the demo. HTTP-only by choice — no custom domain,
+  so no certificate is possible on a bare IP; type `http://` explicitly.
+- **The UI explains its own failures** *(Phase 5, 2026-11-25)*. An unreachable API, an
+  API that answers with a reason, and filters that match nothing are three different
+  messages now, verified against the live site by scaling the backend to zero.
 
 ## New to this project? Start here
 

@@ -19,6 +19,16 @@ metadata:
   name: merit-aid
   annotations:
     kubernetes.io/ingress.class: "gce"
+    # Claim the reserved static address by name instead of taking whatever ephemeral
+    # IP the load balancer is handed. Without this, `terraform destroy` followed by
+    # `terraform apply` comes back on a different address and every link already
+    # shared is dead -- including the one in the README.
+    #
+    # `global-static-ip-name`, not `regional-static-ip-name`: this Ingress creates a
+    # global external Application Load Balancer, so the address it claims has to be a
+    # global one (see the google_compute_global_address in deploy/terraform/main.tf).
+    # The name here must match that resource's name.
+    kubernetes.io/ingress.global-static-ip-name: merit-aid-ip
 spec:
   rules:
     - http:

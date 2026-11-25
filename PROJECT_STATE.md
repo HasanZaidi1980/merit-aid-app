@@ -31,16 +31,16 @@ owning doc when a fact changes.
 | Merit vs need-based aid | ✅ CDS-sourced across the shortlist | The 26-college hand roster was **wrong for 5 of them**; now read from each college's own CDS H2A with provenance, a year, and an expiry. **Default top 50: 50 attempted, 23 resolved**; 24 of 1,907 dataset-wide. A full crawl was measured at ~38% and rejected — see Phase 4. |
 | Tests | ✅ 88 tests, in CI | Scoring, the flag split, net-price coalescing, COA basis, rate scales, weights, merit policy, the year on the row, verdict expiry — plus (Phase 6) the real `data.py` read path against a synthetic fixture dataset, all five endpoints via `TestClient`, and a smoke test that boots uvicorn. `ruff` + `pytest` + smoke run on every push. |
 | **Real data** | ✅ **Installed & validated** | Real IPEDS 2022-23: 1,907 colleges (726 public / 1,095 private nonprofit / 86 for-profit). 5 of 5 reference metrics match. |
-| Error handling | ⚠️ Partial | Server side is done: bad params get a 4xx naming them, a missing dataset a 503 naming the file. In the UI, `/api/meta` failure shows a real error with a retry; `getColleges` and the empty state are still silent (Phase 5). |
-| Deployment | ✅ **Live 2026-11-20** | `http://136.81.186.158/` — GKE zonal cluster, 2 Spot e2-medium nodes, 2 replicas per service on separate nodes, data fetched from GCS on pod start. ~$3.50-4.00/day. Teardown cycle in `DEPLOYMENT.md`; **still running for the demo**. |
+| Error handling | ✅ Done | Server: bad params get a 4xx naming them, a missing dataset a 503 naming the file. UI: both fetches distinguish *nothing answered* from *answered and said no*, quote the server's own message, and offer retry; a filter that matches nothing says so separately. Verified on the live site by scaling the backend to zero. |
+| Deployment | ✅ **Live 2026-11-20** | `http://136.81.186.158/` — **static IP** (reserved 2026-11-25), GKE zonal cluster, 2 Spot e2-medium nodes, 2 replicas per service on separate nodes, data fetched from GCS on pod start. ~$3.50-4.00/day, ~$20 spent in the first five days. HTTP-only by choice — see the deferred decision under Phase 9. Teardown cycle in `DEPLOYMENT.md`; **still running for the demo**. |
 
 **One-line summary:** the app runs on real, validated IPEDS data and produces defensible
 rankings — Stanford #1 at $77,662 sticker against a $7,332 net price for a mid-income
 family, which is exactly the thesis. The numbers are right; the word "merit" on them was
 not, and is now corrected in the UI and sourced per-institution from each college's own
 Common Data Set (Phase 4). What remains is
-a UI that still fails silently on `getColleges`. The deploy is done: it has been live
-on GCP since 2026-11-20.
+nothing in the app's own behaviour: the silent `getColleges` failure was the last of it,
+fixed and verified live on 2026-11-25. The deploy has been live on GCP since 2026-11-20.
 
 ---
 
@@ -425,41 +425,90 @@ meaningful share of those that do publish it in a form no parser can read.
 corroboration at 49% with no public CDS. A 1,907-college crawler would land near
 20–35%, skewed to wealthy privates. It was not built, and should not be.
 
-### Phase 5 — Harden the app for a real user
+### Phase 5 — Harden the app for a real user ✅ *closed 2026-11-25*
 
-Do this before deploying. The failure it prevents is the failure most likely to occur.
+The failure this phase existed to prevent: a backend that is unreachable produced a
+working-looking page with an empty table and no explanation, indistinguishable from
+filters that legitimately matched nothing. Both now say which, on the live site.
 
 - [x] ~~**Add error states.** `getMeta()` needs a `.catch()`~~ — done 2026-10-28: a
       failed `/api/meta` now renders a `.fatal` panel naming the error with a Retry
       button, instead of an endless spinner.
-- [ ] Same for `getColleges` — it still swallows its error and shows an empty table.
-- [ ] **Empty state** when filters return zero rows.
-- [ ] **Decide what happens to the RAG feature.** It has no real data source:
-      `IC2022Mission.csv` does not exist — IPEDS stopped publishing mission statements
-      after 2007. Measured coverage of the 2007 file against the 2022 universe is
-      **36.2%** (690/1907), biased against exactly the sector we just restored
-      (publics 26.9% vs private nonprofit 41.5%), and only **36 of the top 100** by
-      Value Score have any text. The file was half-empty even in 2007.
+- [x] **`getColleges` has a real error state** *(2026-11-25)*. It used to end
+      `.catch(() => setLoading(false))`, which discarded the error and left an empty
+      table. Three outcomes are now distinct, and the page says which: rows, no rows,
+      or a failure.
 
-      It is also *currently broken*: `backend/index/mission_index.npz` was built from
-      the sample CSV, so it holds UNITIDs 100000–100299 while real shortlist IDs are
-      150k–250k. Every query returns "No relevant mission statements found".
+      The enabling fix was in `api.js`, which threw `new Error(r.status)` and so
+      discarded the response body — the one thing worth telling a user was the one
+      thing thrown away. Errors now carry the server's `detail`, and `kind`
+      distinguishes *nothing answered* (fetch rejected) from *answered and said no*.
+      The backend's 503 names the dataset file and the directory it looked in, and
+      that string is now quoted on screen verbatim.
 
-      Recommended: gate it honestly rather than delete it. Have the backend report the
-      mission source (`real` / `synthetic` / `none`) in `/api/rag/status`, and have the
-      frontend hide the panel or show a plain warning when it isn't real. That keeps
-      the pipeline demonstrable without presenting invented text beside real numbers.
-      Finding a genuine source is a separate project.
-- [ ] **Fix the RAG dead-end** (only if the feature survives) — enable
-      `sentence-transformers`, or soften the similarity threshold and say "no strong
-      match" instead of "none found".
-- [ ] Surface the retrieval mode (embeddings vs TF-IDF) in the UI.
+      Retry re-runs only the rankings fetch rather than reloading the page, which
+      would also discard the filters the user had set.
+
+- [x] **Empty state when filters return zero rows** *(2026-11-25)*. It says the
+      request *worked*, gives the dataset size that was searched, names whichever
+      active filter is most likely responsible, and offers Reset — visually distinct
+      from the error card (slate left border, not red).
+
+- [x] **The `/api/meta` failure page was also wrong, and was fixed with it**
+      *(2026-11-25)*. It claimed "Can't reach the backend" even when the backend had
+      answered with a precise reason, and then offered `uvicorn`/`docker compose`
+      advice to someone looking at the deployed site. It now splits the same two cases
+      and quotes the server when there is something to quote. This is the page the
+      missing-dataset failure actually lands on, because `/api/meta` fails first.
+
+- [x] ~~**Decide what happens to the RAG feature**~~, ~~**Fix the RAG dead-end**~~,
+      ~~**Surface the retrieval mode**~~ — all three removed as stale. The feature was
+      deleted in Phase 3.5 (its only data source was generated text, and IPEDS has
+      published no mission file since 2007), so a list implying it still exists was
+      itself misleading. `test_the_removed_rag_endpoints_stay_removed` is what guards
+      it now.
 - [x] ~~Input validation on `/api/colleges`~~ — done in Phase 6, where the tests that
       found the defects live: bounded `top_n` / `max_net_price`, unknown parameters
       rejected, and a 503 that names the missing file instead of a numpy 500.
-- [ ] Consider code-splitting the 4.8 MB bundle (1.4 MB gzipped, nearly all Plotly).
+- [ ] **Code-splitting the 4.8 MB bundle** (1.4 MB gzipped, nearly all Plotly) —
+      deliberately not done, and deliberately left open. It is a performance nicety,
+      not a correctness fix: it changes how fast the page arrives, never whether the
+      numbers on it are right. Doing it means another image build, push and rollout
+      against a live site days before a demo, in exchange for a first-load improvement
+      that is invisible on a second visit. Worth doing after the demo.
 
 **Done when:** killing the backend produces a visible, recoverable error in the UI.
+**Met**, verified against the live site rather than localhost — `kubectl scale
+deploy/backend --replicas=0` while the page was open and in use, then a filter change:
+
+```
+Couldn't reach the rankings service
+
+/api/colleges answered HTTP 502 with no explanation, which is what a load
+balancer returns when no healthy instance is behind it. The API may be
+restarting. This page is served separately from it, which is why you can
+still read this -- and nothing is wrong with your filters.
+
+Try again
+```
+
+and with the dataset itself removed (`DATA_DIR=/data/missing`):
+
+```
+The backend can't serve its data
+
+/api/meta answered HTTP 503 and said:
+
+Missing IPEDS file: HD2022.csv in /data/missing. Run
+scripts/make_sample_data.py for a demo, or add the real files.
+
+The app is running; its dataset is not. Nothing here can be fixed from the
+browser.
+```
+
+The "Shown after filters" tile reads `—` on an error, not `0`, so a failure cannot be
+misread as a result. Captured from the deployed site with headless Chrome, since
+`curl` returns only the 614-byte React shell.
 
 ### Phase 6 — Extend test coverage ✅ *closed 2026-11-18*
 
@@ -578,9 +627,13 @@ Two things remain open here and are fine to leave: the `pull_request` trigger ha
 still never fired, because no pull request has ever existed on this repo, and the
 frontend has no tests beyond the build.
 
-### Phase 7 — Upgrade to IPEDS 2023-24 🔒 *blocked by Phase 2*
+### Phase 7 — Upgrade to IPEDS 2023-24 ⏸️ *unblocked, deferred by choice*
 
-Full plan in §6 below.
+**Not blocked.** It was gated on Phase 2 (install and validate the real dataset),
+which closed on 2026-10-28. Nothing stands in the way of doing it; it is simply not
+worth doing before the demo, because it would re-open every number the app displays
+and re-validate every figure in these docs for a one-year-newer dataset that changes
+no conclusion. Full plan in §6 below.
 
 ### Phase 8 — Deploy to GCP ✅ *live 2026-11-20*
 
@@ -674,11 +727,62 @@ this billing account, so the one-free-zonal-cluster credit ($74.40/month) should
 and bring it to roughly $45-50/month — an expectation to confirm against the actual
 bill in 24-48 hours, not a measurement.
 
-### Phase 9 — Finish
+### Phase 9 — Finish ✅ *closed 2026-11-25*
 
-- [ ] README reflects the deployed URL and the real data year.
-- [ ] `PROJECT_STATE.md` (this file) marked complete.
-- [ ] Teardown verified — no lingering GCP billing.
+- [x] **README reflects the deployed URL and the real data year** *(2026-11-25)*.
+      Both years, because they differ: the institutional and derived files are IPEDS
+      **2022-23**, while student financial aid (`SFA2122`) is **2021-22**. Every net
+      price, grant and COA figure in the app comes from that 2021-22 cohort, so saying
+      only "2022-23" would overstate how current the money is.
+
+- [x] **The live address is now static** *(2026-11-25)*. The load balancer had an
+      ephemeral IP, so a destroy/apply cycle would have returned a different one and
+      killed every link already shared — including the one now in the README. The
+      address the load balancer was already using was promoted in place
+      (`gcloud compute addresses create merit-aid-ip --global
+      --addresses=136.81.186.158`), imported into Terraform as
+      `google_compute_global_address` so it is code rather than a console artefact,
+      and claimed by the Ingress by name. `terraform plan` reports **No changes**, and
+      the IP was still `136.81.186.158` and still serving HTTP 200 three minutes after
+      the annotation was applied.
+
+      It had to be **global**, not regional: a GKE Ingress creates a global external
+      Application Load Balancer, confirmed by the forwarding rule appearing under
+      `gcloud compute forwarding-rules list --global` and under no region. A regional
+      address cannot serve a global forwarding rule.
+
+- [x] **`PROJECT_STATE.md` marked complete** — Phases 1-6, 8 and 9 closed; Phase 7
+      unblocked and deferred by choice.
+
+- [ ] **Teardown verified** — deliberately *not* done. The stack is up for the demo,
+      and the teardown order in `DEPLOYMENT.md` is written from the resource
+      dependencies rather than from having run it. That is stated there as untested,
+      and it stays stated until someone runs it.
+
+### Deferred decision: no custom domain, so the site is HTTP-only
+
+*Recorded 2026-11-25 so this reads as a choice and not an oversight.* Hasan decided
+against a custom domain for now. A domain adds DNS propagation and certificate
+provisioning as new failure modes within days of a demo, and it complicates teardown
+by leaving a registration and DNS records behind after the cluster is gone.
+
+The consequences, which are real and worth stating plainly:
+
+- **The site is HTTP-only and browsers mark it "Not secure".** There is no way around
+  that on a bare IP: a Google-managed certificate requires a domain name, because
+  certificates are issued to names and not to addresses.
+- **Chrome actively tries HTTPS first.** Observed while capturing the live page on
+  2026-11-25: headless Chrome upgraded `http://136.81.186.158/` to `https://`, found
+  no certificate, and landed on `chrome-error://chromewebdata/` rather than the site.
+  The capture needed `--disable-features=HttpsUpgrades`. Anyone sharing the link
+  should write `http://` explicitly and expect some browsers to need a click-through.
+- **Nothing sensitive crosses the wire.** The app takes no credentials and no personal
+  data; it reads public IPEDS figures and sends filter values. The exposure from plain
+  HTTP here is a trust signal, not a data risk.
+
+Reversible in about 20 minutes whenever a domain is wanted: point an A record at
+`136.81.186.158` — which is static now, so it is a valid DNS target — then attach a
+`ManagedCertificate` to the Ingress.
 
 ---
 

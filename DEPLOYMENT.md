@@ -55,8 +55,23 @@ terraform apply tfplan
 ```
 
 Creates: 4 enabled APIs, a VPC + subnet (with the secondary ranges that make the cluster
-VPC-native), the GKE cluster, a 2-node Spot pool, an Artifact Registry repo and the GCS
-bucket. **About 10 minutes**, nearly all of it the cluster (8m35s observed).
+VPC-native), the GKE cluster, a 2-node Spot pool, an Artifact Registry repo, the GCS
+bucket and the **static external IP**. **About 10 minutes**, nearly all of it the cluster
+(8m35s observed).
+
+> **The IP is static, and that is load-bearing.** The Ingress claims
+> `merit-aid-ip` by name (`kubernetes.io/ingress.global-static-ip-name`), so a
+> redeploy comes back on the same address instead of a new one. It is a
+> `google_compute_global_address` — **global**, because a GKE Ingress creates a global
+> external Application Load Balancer and a regional address cannot serve a global
+> forwarding rule. On 2026-11-25 the existing ephemeral address was promoted in place
+> rather than replaced, so the live URL never changed:
+>
+> ```bash
+> gcloud compute addresses create merit-aid-ip --global --addresses=136.81.186.158
+> terraform import google_compute_global_address.ingress merit-aid-ip
+> terraform plan      # No changes. Your infrastructure matches the configuration.
+> ```
 
 > **First-apply trap, now fixed in `main.tf`:** on a project where the Compute API has
 > never been used, the VPC is created in parallel with the API-enablement resources and
@@ -172,11 +187,15 @@ API on 2026-11-20, not from a blog post):
 | Zonal GKE cluster management fee | $0.100000 / hour | $2.40 | $73.00 |
 | 2 × e2-medium Spot nodes | $0.012440 / vCPU-hr + $0.001666 / GiB-hr → $0.019104/node-hr | $0.92 | $27.90 |
 | External Application Load Balancer | not read from the catalog API | ~$0.60 | ~$18 (unverified) |
-| GCS storage (20.5 MiB) + Artifact Registry (~0.5 GB) | negligible | <$0.01 | ~$0.10 |
+| Static external IP | $0.010000 / hour (base "Static Ip Charge" SKU) | up to $0.24 | up to $7.30 |
+| GCS storage (20.5 MiB) + Artifact Registry (~1 GB) | negligible | <$0.01 | ~$0.15 |
 
 **Roughly $3.50–4.00 a day, $100–120 a month**, which is at the top of the original
-$70–100 estimate — the load-balancer line is the one figure here not taken from a primary
-source, so treat it as approximate until the first real invoice lands.
+$70–100 estimate. Two caveats on precision: the load-balancer line is the one figure not
+taken from a primary source, and the static-IP SKU exists at $0.010/hour but Google
+charges it differently for an address that is attached to a live forwarding rule than for
+one sitting idle — the billing detail will show which applies here, since the address was
+only reserved on 2026-11-25.
 
 **The GKE free tier may cancel most of this.** Google gives one zonal cluster per billing
 account a $74.40/month credit. No other GKE cluster exists in any project on this billing
@@ -192,7 +211,25 @@ Charges accrue whether or not anybody visits the site.
 ## Tearing it down
 
 **`terraform destroy` is what stops the charges.** It deletes the cluster, the nodes, the
-load balancer and the bucket — the resources stop existing, so they stop billing.
+load balancer, the bucket and the static IP — the resources stop existing, so they stop
+billing.
+
+> **Destroying releases the URL.** The static address is now managed by Terraform, so
+> `terraform destroy` deletes it too and the next deploy comes back on a different IP.
+> That is the right default: an idle reserved address keeps billing for nothing. If you
+> want to keep `136.81.186.158` across a teardown — because it is written in the README
+> and shared — take it out of Terraform's control first, then put it back on redeploy:
+>
+> ```bash
+> cd deploy/terraform
+> terraform state rm google_compute_global_address.ingress   # survives destroy
+> terraform destroy
+> # ...later, redeploying:
+> terraform apply
+> terraform import google_compute_global_address.ingress merit-aid-ip
+> ```
+>
+> The address then bills on its own (see the cost table) while nothing is using it.
 
 **Never switch the billing account off.** Five-plus projects share this billing account,
 including `healthbuddy-prod`. Disabling billing affects every one of them and can break or
@@ -241,6 +278,10 @@ images, `kubectl apply -f deploy/k8s/`. About **15–20 minutes**, most of it th
 - **Shared-core E2 nodes report 940m allocatable CPU** whatever their memory size, and
   GKE's own system pods request about 680m of it. Budget node capacity from
   `kubectl describe node`, not from the machine type's advertised vCPUs.
+- **A reserved IP must match the load balancer's scope.** Global ALB, global address.
+  `gcloud compute forwarding-rules list --global` shows the rule; it appears under no
+  region. Reserving a *regional* address for it would create a second, unusable IP and
+  leave the live one ephemeral.
 - **`ingressClassName: gce` does not work on GKE.** This cluster has no IngressClass
   objects at all (`kubectl get ingressclass` → *No resources found*), so the Ingress must
   carry the `kubernetes.io/ingress.class: "gce"` annotation that Kubernetes marks

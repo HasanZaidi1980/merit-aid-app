@@ -113,6 +113,29 @@ resource "google_container_node_pool" "nodes" {
   }
 }
 
+# --- Static external IP for the Ingress -------------------------------------
+# The load balancer started with an EPHEMERAL address. That is a trap with a delay
+# fuse: a destroy/apply cycle hands back a different IP, and every link already
+# shared -- a README, a message to a reviewer -- is dead with no warning.
+#
+# This adopts the address the load balancer was already using rather than allocating
+# a new one, so promoting it changed nothing that was live:
+#
+#   gcloud compute addresses create merit-aid-ip --global --addresses=136.81.186.158
+#
+# then `terraform import google_compute_global_address.ingress merit-aid-ip`.
+#
+# GLOBAL, not regional. A GKE Ingress creates a global external Application Load
+# Balancer -- verified: the forwarding rule lists under `gcloud compute
+# forwarding-rules list --global` and not under a region -- and a regional address
+# cannot serve a global forwarding rule. The Ingress claims it by name through the
+# `kubernetes.io/ingress.global-static-ip-name` annotation (deploy/k8s/ingress.yaml).
+resource "google_compute_global_address" "ingress" {
+  name = "merit-aid-ip"
+
+  depends_on = [google_project_service.svc]
+}
+
 # --- Cloud Storage bucket for the 6 IPEDS CSVs ---
 # Six, not eight: there are six source files (HD2022, SFA2122, IC2022_AY, ADM2022,
 # DRVADM2022, DRVGR2022). This bucket is the durable copy the backend's init

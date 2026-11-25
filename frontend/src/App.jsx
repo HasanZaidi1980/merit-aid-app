@@ -23,13 +23,21 @@ export default function App() {
     excludeFlagged: true, excludeNoMerit: false,
   });
   const [rows, setRows] = useState([]);
+  const [rowsError, setRowsError] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Bumped by the Retry button so the fetch effect re-runs without reloading the
+  // page -- a reload would also re-fetch /api/meta and the distributions, and throw
+  // away the filters the user had set.
+  const [reloadKey, setReloadKey] = useState(0);
   const [sort, setSort] = useState({ key: 'RANK', dir: 1 });
 
   useEffect(() => {
     // Without the catch, a backend that is down leaves `meta` null forever and the
     // whole app sits on "Loading…" with nothing to explain why.
-    getMeta().then(setMeta).catch((e) => setMetaError(String(e.message || e)));
+    getMeta().then(setMeta).catch((e) => setMetaError({
+      kind: e.kind, status: e.status, detail: e.detail,
+      message: String(e.message || e),
+    }));
     // Education distributions are optional: if this fails the ranking still works,
     // so the education section hides itself rather than breaking the page.
     getDistributions().then(setDist).catch(() => {});
@@ -40,11 +48,26 @@ export default function App() {
     if (meta) setDims(Object.fromEntries(meta.dimensions.map((d) => [d.key, true])));
   }, [meta]);
 
+  // The defect this replaces: `.catch(() => setLoading(false))` swallowed the error
+  // and left the previous rows (or none) on screen, so an unreachable backend looked
+  // exactly like a filter that matched nothing -- a working page with an empty table
+  // and no explanation. Three outcomes now, and the UI says which: rows, no rows, or
+  // a failure with the server's own words.
   useEffect(() => {
+    let current = true;
     setLoading(true);
-    getColleges(filters).then((r) => { setRows(r.colleges); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [filters]);
+    setRowsError(null);
+    getColleges(filters)
+      .then((r) => { if (current) { setRows(r.colleges); setLoading(false); } })
+      .catch((e) => {
+        if (!current) return;
+        setRows([]);                 // never show a stale ranking beside an error
+        setRowsError({ kind: e.kind, status: e.status, detail: e.detail,
+                       message: String(e.message || e) });
+        setLoading(false);
+      });
+    return () => { current = false; };
+  }, [filters, reloadKey]);
 
   const sorted = useMemo(() => {
     const s = [...rows].sort((a, b) => {
@@ -108,14 +131,33 @@ export default function App() {
   }];
 
   if (metaError) {
+    // Two different things went wrong and they do not get the same page. If the API
+    // answered with a reason -- a 503 naming the dataset file it could not find, say
+    // -- then "can't reach the backend" is false and local-dev advice is noise to
+    // whoever is looking at the deployed site. Quote the server instead.
+    const answered = Boolean(metaError.detail);
     return (
       <div className="fatal">
-        <h2>Can’t reach the backend</h2>
-        <p>
-          <code>/api/meta</code> failed: {metaError}. The API has to be running for the
-          rankings to load — start it with <code>uvicorn app.main:app --reload</code>, or
-          bring the whole stack up with <code>docker compose up</code>.
-        </p>
+        <h2>{answered ? 'The backend can’t serve its data' : 'Can’t reach the backend'}</h2>
+        {answered ? (
+          <>
+            <p>
+              <code>/api/meta</code> answered <b>HTTP {metaError.status}</b> and said:
+            </p>
+            <p className="notice-detail">{metaError.detail}</p>
+            <p>
+              The app is running; its dataset is not. Nothing here can be fixed from the
+              browser.
+            </p>
+          </>
+        ) : (
+          <p>
+            <code>/api/meta</code> did not respond ({metaError.message}). The API has to
+            be running for the rankings to load — if you are running this locally, start
+            it with <code>uvicorn app.main:app --reload</code>, or bring the whole stack
+            up with <code>docker compose up</code>.
+          </p>
+        )}
         <button className="btn" onClick={() => window.location.reload()}>Retry</button>
       </div>
     );
@@ -244,14 +286,63 @@ export default function App() {
 
         <div className="stats">
           <div className="stat"><div className="n">{meta.colleges_in_dataset.toLocaleString()}</div><div className="l">Colleges in dataset</div></div>
-          <div className="stat"><div className="n">{loading ? '…' : rows.length}</div><div className="l">Shown after filters</div></div>
+          <div className="stat"><div className="n">{loading ? '…' : rowsError ? '—' : rows.length}</div><div className="l">Shown after filters</div></div>
           <div className="stat"><div className="n">{pct(meta.median_aid_share)}</div><div className="l">Median aid share</div></div>
           <div className="stat"><div className="n">{rows[0] ? fmt$(rows[0].DISCOUNT) : '—'}</div><div className="l">Top pick discount</div></div>
         </div>
 
         <MeritNote meta={meta} shown={needOnlyShown} />
 
-        {loading ? <div className="loading">Crunching the rankings…</div> : (
+        {loading ? <div className="loading">Crunching the rankings…</div> : rowsError ? (
+          <div className="card notice notice-error">
+            {/* Three different failures, three different sentences. The one that
+                matters most is the middle one: when the dataset is missing the
+                backend answers 503 with a `detail` naming the file and the directory
+                it looked in, and quoting that is what turns a broken deployment into
+                a five-second diagnosis. A load-balancer 502 carries no detail at all
+                -- that is "nothing is serving", not "your request was wrong". */}
+            <h3>{rowsError.detail
+              ? 'The rankings service can’t answer'
+              : 'Couldn’t reach the rankings service'}</h3>
+
+            {rowsError.detail ? (
+              <>
+                <p className="cap">
+                  <code>/api/colleges</code> answered <b>HTTP {rowsError.status}</b> and
+                  said:
+                </p>
+                <p className="notice-detail">{rowsError.detail}</p>
+              </>
+            ) : (
+              <p className="cap">
+                {rowsError.kind === 'unreachable'
+                  ? 'Nothing answered at /api/colleges.'
+                  : `/api/colleges answered HTTP ${rowsError.status} with no explanation, which is what a load balancer returns when no healthy instance is behind it.`}
+                {' '}The API may be restarting. This page is served separately from it,
+                which is why you can still read this — and nothing is wrong with your
+                filters.
+              </p>
+            )}
+
+            <button className="btn" onClick={() => setReloadKey((k) => k + 1)}>
+              Try again
+            </button>
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="card notice notice-empty">
+            <h3>No colleges match these filters</h3>
+            <p className="cap">
+              The request worked — {meta.colleges_in_dataset.toLocaleString()} colleges
+              were searched and none of them fit. This is an answer, not a failure.
+              {filters.maxNetPrice <= 5000 && ' A net price cap this low excludes almost everything.'}
+              {filters.mgiMedian && ' “More generous than the median” is on, which removes about half the dataset before the other filters apply.'}
+            </p>
+            <button className="btn" onClick={() => setFilters({
+              maxNetPrice: 25000, mgiMedian: true, topN: 20,
+              excludeFlagged: true, excludeNoMerit: false,
+            })}>Reset filters</button>
+          </div>
+        ) : (
         <>
           <div className="grid">
             {/* Full width: five axes plus a 20-row legend do not fit a half-width
