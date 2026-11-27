@@ -16,20 +16,64 @@ DEFAULTS = {
     "exclude_no_merit": False,
 }
 
-# The 6 IPEDS files this app expects (exact filenames). There is no mission file:
-# IPEDS last published institutional mission statements for 2007 (IC2007Mission;
-# IC2008Mission and IC2022Mission return 404 from the IPEDS data center, verified
-# 2026-11-17). See PROJECT_STATE.md for why the RAG panel was removed.
-FILES = {
-    "hd":       "HD2022.csv",
-    # One file, not the two the reconstruction originally assumed. IPEDS has never
-    # published an SFA P1/P2 split; both IGRNT_A and the net-price columns live here.
-    "sfa":      "SFA2122.csv",
-    "ic_ay":    "IC2022_AY.csv",
-    "adm":      "ADM2022.csv",
-    "drvadm":   "DRVADM2022.csv",
-    "drvgr":    "DRVGR2022.csv",
+# Which IPEDS release to read. Set IPEDS_YEAR to switch; both years stay runnable so
+# a difference between them can be diffed rather than guessed at. The label is the
+# INSTITUTIONAL year -- the money always lags it by one, which FILES_BY_YEAR records
+# per release rather than leaving to memory.
+IPEDS_YEAR = os.getenv("IPEDS_YEAR", "2022-23")
+
+# There is no mission file in either year: IPEDS last published institutional mission
+# statements for 2007 (IC2007Mission; IC2008Mission and IC2022Mission return 404 from
+# the IPEDS data center, verified 2026-11-17). See PROJECT_STATE.md for why the RAG
+# panel was removed.
+#
+# Filenames are as IPEDS ships them inside the download zips, which is not
+# consistently cased -- HD2023.csv is uppercase while sfa2223.csv is lowercase, and
+# the 2022-23 set in backend/data/ was renamed to uppercase by hand when it was
+# installed. data._read() resolves the name case-insensitively so that neither a
+# rename nor a case-sensitive filesystem can turn this into a missing-file error.
+FILES_BY_YEAR = {
+    "2022-23": {
+        "hd":       "HD2022.csv",
+        # One file, not the two the reconstruction originally assumed. IPEDS has never
+        # published an SFA P1/P2 split; both IGRNT_A and the net-price columns live here.
+        "sfa":      "SFA2122.csv",      # money: 2021-22
+        "ic_ay":    "IC2022_AY.csv",    # tuition: 2022-23
+        "adm":      "ADM2022.csv",
+        "drvadm":   "DRVADM2022.csv",
+        "drvgr":    "DRVGR2022.csv",
+    },
+    "2023-24": {
+        "hd":       "HD2023.csv",
+        "sfa":      "SFA2223.csv",      # money: 2022-23
+        "ic_ay":    "IC2023_AY.csv",    # tuition: 2023-24
+        "adm":      "ADM2023.csv",
+        "drvadm":   "DRVADM2023.csv",
+        "drvgr":    "DRVGR2023.csv",
+    },
 }
+
+if IPEDS_YEAR not in FILES_BY_YEAR:
+    raise ValueError(
+        f"IPEDS_YEAR={IPEDS_YEAR!r} is not a release this app knows. "
+        f"Known: {sorted(FILES_BY_YEAR)}"
+    )
+
+FILES = FILES_BY_YEAR[IPEDS_YEAR]
+
+# The net-price and grant variables are NOT year-coded the way their names suggest.
+# Verified against the SFA2223 dictionary on 2026-11-27: the trailing digit is an
+# index relative to the file's own survey year, not a fixed year code.
+#
+#   in SFA2122:  NPT442 / NPIS442 / GRN4A42 / GIS4A42  ->  2021-22
+#   in SFA2223:  NPT442 / NPIS442 / GRN4A42 / GIS4A42  ->  2022-23   (same names!)
+#                NPT441 / NPIS441 / GRN4A41 / GIS4A41  ->  2021-22
+#
+# So the column names never change between releases and the app needs no mapping --
+# but anyone "fixing" this by pattern-matching the old year onto ...1 would silently
+# serve data a year stale, with no error anywhere. That is why this is written down.
+SFA_YEAR_BY_RELEASE = {"2022-23": "2021-22", "2023-24": "2022-23"}
+SFA_MONEY_YEAR = SFA_YEAR_BY_RELEASE[IPEDS_YEAR]
 
 # IPEDS uses these as "missing / not applicable" sentinels.
 MISSING_SENTINELS = [-1, -2, -3, -9]

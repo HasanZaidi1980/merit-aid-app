@@ -15,6 +15,9 @@ The checks are modelled on the ones that caught real defects here (CLAUDE.md §1
 impossible values, who is actually in the rows, and reproducing a known number.
 """
 import os
+import pathlib
+import subprocess
+import sys
 
 import numpy as np
 import pandas as pd
@@ -37,6 +40,10 @@ NO_TUITION, TWO_YEAR, NON_DEGREE = 999005, 999006, 999007
 ABSENT_FROM_SFA, GRANT_OVER_COST = 999008, 999009
 NO_BAND_GRANT, FOR_PROFIT, UNCLASSIFIED = 999010, 999011, 999012
 SUPPRESSED_GRANT = 999013
+
+# The UTF-8 byte-order mark, spelled as bytes so no escape can be mangled in
+# transit. HD2023.csv from IPEDS begins with exactly these three bytes.
+BOM = bytes([0xEF, 0xBB, 0xBF])
 
 SURVIVES = {HEALTHY_PRIVATE, HEALTHY_PUBLIC, SENTINELS, NO_GRAD_RATE,
             GRANT_OVER_COST, NO_BAND_GRANT, FOR_PROFIT, UNCLASSIFIED}
@@ -250,3 +257,78 @@ def test_the_fixtures_are_never_the_app_default():
     assert len(hd) == 13
     assert hd["INSTNM"].str.startswith("ZZ SYNTHETIC").all()
     assert (hd["UNITID"] >= 999000).all()
+
+
+# --------------------------------------------------------------------------
+# Phase 7 (IPEDS 2023-24) found these two by reading the new files rather than
+# trusting them. Both would have been a missing-file or missing-column error at
+# load time, in the container, on a dataset nobody could inspect from a browser.
+# --------------------------------------------------------------------------
+
+def test_a_byte_order_mark_does_not_rename_the_join_key(data_dir, tmp_path):
+    """HD2023.csv ships with a UTF-8 BOM and no other IPEDS file in either release
+    does (verified: its first three bytes are ef bb bf). Read as latin-1 -- which the
+    rest of the file requires -- those bytes decode to "ï»¿", so the first column
+    arrives named "ï»¿UNITID" and every join silently loses its key."""
+    src = pathlib.Path(SYNTHETIC)
+    for f in src.glob("*.csv"):
+        raw = f.read_bytes()
+        # Put a BOM on the HD file only, exactly as IPEDS ships it.
+        prefix = BOM if f.name == "HD2022.csv" else b""
+        (tmp_path / f.name).write_bytes(prefix + raw)
+
+    assert (tmp_path / "HD2022.csv").read_bytes()[:3] == BOM
+
+    data_dir(tmp_path)
+    df = data.build_dataset()
+    assert "UNITID" in df.columns
+    mangled = BOM.decode("latin-1")
+    assert not any(c.startswith(mangled) or c.startswith("﻿") for c in df.columns)
+    assert set(df["UNITID"]) == SURVIVES
+
+
+def test_a_filename_resolves_regardless_of_case(data_dir, tmp_path):
+    """IPEDS ships `HD2023.csv` next to `sfa2223.csv` in the same download, and the
+    2022-23 set in backend/data/ was renamed to uppercase by hand. Windows hides that
+    difference and Linux does not, which is the shape of a bug that only appears in
+    the container."""
+    for f in pathlib.Path(SYNTHETIC).glob("*.csv"):
+        (tmp_path / f.name.lower()).write_bytes(f.read_bytes())
+
+    assert not (tmp_path / "HD2022.csv").exists() or os.listdir(tmp_path) == [
+        n.lower() for n in os.listdir(tmp_path)]
+
+    data_dir(tmp_path)
+    df = data.build_dataset()          # config.FILES still says HD2022.csv
+    assert len(df) == 8
+
+
+def test_the_survey_year_is_configuration_not_a_hardcoded_filename():
+    """Both releases stay runnable so a difference between them can be diffed rather
+    than guessed at, and every release has to declare which year its MONEY is from --
+    the SFA file lags the institutional year, and the net-price variables keep the
+    same names across releases while meaning a different year."""
+    assert config.IPEDS_YEAR in config.FILES_BY_YEAR
+    assert config.FILES == config.FILES_BY_YEAR[config.IPEDS_YEAR]
+
+    expected_keys = {"hd", "sfa", "ic_ay", "adm", "drvadm", "drvgr"}
+    for year, files in config.FILES_BY_YEAR.items():
+        assert set(files) == expected_keys, year
+        # A release with no declared money year would make MGI and Aid Share
+        # undatable, which is the error this project keeps catching.
+        assert year in config.SFA_YEAR_BY_RELEASE, year
+
+    # The money year is always one behind the institutional year.
+    for year, money in config.SFA_YEAR_BY_RELEASE.items():
+        assert int(money[:4]) == int(year[:4]) - 1, (year, money)
+
+
+def test_an_unknown_survey_year_fails_at_import_not_at_request_time():
+    """A typo in IPEDS_YEAR must stop the process, not fall back to a default and
+    serve a year nobody asked for."""
+    env = {**os.environ, "IPEDS_YEAR": "2019-20"}
+    r = subprocess.run([sys.executable, "-c", "from app import config"],
+                       cwd=os.path.dirname(os.path.dirname(os.path.abspath(data.__file__))),
+                       env=env, capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "2019-20" in r.stderr and "not a release" in r.stderr

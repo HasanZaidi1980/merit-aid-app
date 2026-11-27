@@ -627,13 +627,105 @@ Two things remain open here and are fine to leave: the `pull_request` trigger ha
 still never fired, because no pull request has ever existed on this repo, and the
 frontend has no tests beyond the build.
 
-### Phase 7 — Upgrade to IPEDS 2023-24 ⏸️ *unblocked, deferred by choice*
+### Phase 7 — Upgrade to IPEDS 2023-24 🧪 *validated on a branch 2026-11-27, NOT live*
 
-**Not blocked.** It was gated on Phase 2 (install and validate the real dataset),
-which closed on 2026-10-28. Nothing stands in the way of doing it; it is simply not
-worth doing before the demo, because it would re-open every number the app displays
-and re-validate every figure in these docs for a one-year-newer dataset that changes
-no conclusion. Full plan in §6 below.
+**Status: green on `phase7-ipeds-2023-24`, and deliberately not serving.** The demo
+stack keeps serving known-good 2022-23 numbers until Hasan says otherwise. Switching
+is a one-line change (`IPEDS_YEAR=2023-24`) plus installing the new CSVs in the
+bucket, because the year is configuration now rather than six filenames to edit.
+
+**The year is configuration.** `config.FILES_BY_YEAR` holds both releases and
+`IPEDS_YEAR` selects one, so the two years stay runnable side by side and a difference
+between them can be diffed rather than guessed at. An unknown year fails at import
+rather than falling back to a default — there is a test for that.
+
+#### The variable trap, which is the opposite of the expected one
+
+The expectation going in was that the new file would name the same concepts
+differently. It does not: **the names are identical and the meaning moves.** Read from
+the `SFA2223` dictionary's own text on 2026-11-27:
+
+| Variable | in `SFA2122` | in `SFA2223` |
+|---|---|---|
+| `NPT442`, `NPIS442` | net price, 2021-22 | net price, **2022-23** |
+| `GRN4A42`, `GIS4A42` | avg grant, 2021-22 | avg grant, **2022-23** |
+| `NPT441`, `GRN4A41` | net price/grant, 2020-21 | net price/grant, **2021-22** |
+
+The trailing digit is an index relative to the file's own survey year, not a fixed
+year code. So the app needs **no column mapping at all** — but anyone "fixing" the
+upgrade by pattern-matching the old year onto `...1` would silently serve data a year
+stale, with no error anywhere. `config.SFA_MONEY_YEAR` records which year the money
+actually describes per release, and a test asserts every release declares one.
+
+#### Two loader defects the new files exposed
+
+Both would have surfaced as a 503 in the container on a dataset nobody could inspect:
+
+- **`HD2023.csv` ships with a UTF-8 BOM** and no other file in either release does
+  (verified: first three bytes `ef bb bf`). Read as latin-1 — which the rest of IPEDS
+  text requires — those bytes become `ï»¿`, so the first column arrives named
+  `ï»¿UNITID` and every join loses its key. The header is now stripped on read rather
+  than the encoding changed, because utf-8-sig would then break on the genuinely
+  latin-1 bytes elsewhere.
+- **IPEDS ships inconsistent filename casing** — `HD2023.csv` next to `sfa2223.csv` in
+  the same download, while the installed 2022-23 set was renamed to uppercase by hand.
+  Windows hides that; Linux does not. `data._resolve()` now matches case-insensitively.
+
+Both have tests.
+
+#### Validation, rebuilt rather than reused
+
+1907 / 2200 / 63997 / 985 are 2022-23 facts and do not reproduce; that is not a
+regression. What had to hold are the invariants, and they do:
+
+| Check | 2022-23 | 2023-24 |
+|---|---|---|
+| colleges in dataset | 1,907 | **1,906** |
+| public / private nonprofit / for-profit | 726 / 1,095 / 86 | 741 / 1,083 / 82 |
+| net price min–max | $2,200–$63,997 | $2,650–$63,333 |
+| SAT coverage | 985 | 963 |
+| median aid share | 0.2942 | **0.2932** |
+| median MGI | 0.5798 | **0.5836** |
+| **COA identity** max \|COA − (net + grant)\| | **$0.00** over 1,907 | **$0.00** over 1,906 |
+| **negative discount** (the 24%-of-dataset defect) | **0** | **0** |
+| net-price pair both populated | 0 | **0** |
+| grant pair both populated | 0 | **0** |
+| grant with no matching net price | 0 | **0** |
+| merit roster institutions present | 24/24 | **24/24** |
+
+The medians moving by less than a tenth of a percentage point is the direction check:
+the dataset is the same shape, one year on.
+
+CDS editions and IPEDS survey years are independent, so upgrading IPEDS does not age
+a merit-aid record — and all 24 institutions still exist in the new universe.
+
+#### What moved, and the one caveat worth knowing before switching
+
+Ranking movement is real but not wholesale: **14 of the top 20 survive**, and median
+movement is 94 places out of 1,710 scoreable colleges (≈5.5 percentiles), p90 = 331.
+
+The driver is graduation rate, which is one third of the Value Score and is noisier
+between these two releases than price or aid:
+
+| Component | median change, colleges in both years |
+|---|---|
+| 4-year graduation rate | **0.0000** (but 322 colleges fell >5 points and 181 rose >5) |
+| net price | +$292 |
+| average institutional grant | +$433 |
+| aid share | +0.0038 |
+| admissions rate | 0.0000 |
+
+`DRVGR2023`'s `GBA4RTT` is the **2017 bachelor's subcohort**, whose four-year window
+ends in 2020-21 — the pandemic year, when leaves of absence at selective colleges were
+common. Stanford reads 0.730 → 0.580 and Harvard 0.870 → 0.660, which is why Stanford
+leaves the top 10 and Washington and Lee takes first place. The dataset median 4-year
+rate is unchanged at 0.410, so this is tail volatility in a cohort-based measure, not
+a pipeline fault — but it means the *story* the app tells changes with the year, and
+that is worth saying out loud rather than discovering on stage.
+
+**Done when:** the app serves 2023-24 data with every movement explained. **The
+validation half is met; the switch is Hasan's call.** Presenting on 2022-23 with a
+clean story beats presenting on freshly-switched data.
 
 ### Phase 8 — Deploy to GCP ✅ *live 2026-11-20*
 
@@ -1024,21 +1116,35 @@ one year → `SFA2122`). **Verify against the Data Center before relying on this
 | `ADM2022.csv` | `ADM2023.csv` |
 | `DRVADM2022.csv` | `DRVADM2023.csv` |
 | `DRVGR2022.csv` | `DRVGR2023.csv` |
-| `IC2022Mission.csv` | `IC2023Mission.csv` |
 
-Note SFA always lags the charges data by a year — that's IPEDS, not a bug in the app.
+~~`IC2022Mission.csv` → `IC2023Mission.csv`~~ — there is no mission file in either
+year; the feature was deleted in Phase 3.5.
+
+**Confirmed 2026-11-27**: all six names are correct, every file and dictionary exists
+at the IPEDS Data Center, and SFA still lags the charges data by a year — tuition in
+`IC2023_AY` is 2023-24 while the money in `SFA2223` is 2022-23. Note the casing IPEDS
+actually ships: `HD2023.csv` is uppercase, the other five are lowercase.
 
 ### Steps
 
-1. **Diff the dictionaries first.** Download both years' Excel dictionaries and compare
-   the columns the app reads: `IGRNT_A`, `NPT442`, `TUITION2`, `CHG4AY3`, `CHG5AY3`,
-   `CHG6AY3`, `CHG7AY3`, `SATVR75`, `SATMT75`, `DVADM01`, `GBA4RTT`, `ICLEVEL`,
-   `HDEGOFR1`, `CONTROL`. Report any rename, redefinition or unit change **before**
-   touching code.
+1. ~~**Diff the dictionaries first.**~~ **Done 2026-11-27.** The columns the app
+   actually reads are `IGRNT_A`, `NPT442`/`NPIS442`, `GRN4A42`/`GIS4A42`, `TUITION2`,
+   `SATVR75`, `SATMT75`, `DVADM01`, `GBA4RTT`, `ICLEVEL`, `HDEGOFR1`, `CONTROL` — the
+   `CHG*AY3` charge columns are no longer read at all, since Phase 3 replaced the
+   hand-summed sticker with the identity IPEDS nets against.
+
+   Confirmed from the 2023-24 dictionaries: `ICLEVEL` 1 is still "Four or more years",
+   `HDEGOFR1` is still "Highest degree offered", `GBA4RTT` is still the 4-year
+   bachelor's rate on a 0–100 scale (stats sheet: min 0, max 100), `DVADM01` is still
+   "Percent admitted - total" on 0–100, and `TUITION2` is still in-state average
+   tuition. So `config.RATE_COLUMNS` needs no change — but see the variable trap in
+   Phase 7 above for what *did* change.
 2. **Download** the 2023-24 complete data files (CSV, final release).
-3. **Update the filenames** — 8 strings in [`config.py:25-32`](backend/app/config.py#L25-L32)
-   and the matching 8 in [`scripts/make_sample_data.py`](backend/scripts/make_sample_data.py),
-   so the sample generator keeps producing files the loader can find.
+3. ~~**Update the filenames**~~ — replaced by configuration: `config.FILES_BY_YEAR`
+   holds both releases and `IPEDS_YEAR` picks one, so nothing is edited to switch and
+   both years stay runnable. `make_sample_data.py` still generates 2022-23 names,
+   which is correct — the sample data exists to run the app without the real files,
+   not to imitate a particular release.
 4. **Update display copy** — the "IPEDS 2022-23" strings in `frontend/src/App.jsx`,
    `PROJECT_BRIEF.md` and `ANALYSIS.md`.
 5. **Run `pytest`.** Fixtures are in-memory and year-agnostic, so a failure here means
