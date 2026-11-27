@@ -46,7 +46,16 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: frontend
-          image: us-central1-docker.pkg.dev/merit-aid-app/merit-aid/frontend:latest
+          # Pinned by DIGEST, not by `:latest`. With a mutable tag, any pod restart
+          # -- a Spot preemption, a node upgrade, an OOM -- pulls whatever was last
+          # pushed to that tag, so a half-finished image on the registry becomes the
+          # running code at a moment nobody chose. One preemption has already
+          # happened here (node bbfh, 2026-11-21T04:54:52, recreated 21s later), so
+          # this is not hypothetical.
+          #
+          # Refresh it deliberately after a push:
+          #   gcloud artifacts docker images describe us-central1-docker.pkg.dev/merit-aid-app/merit-aid/frontend:latest           #     --format='value(image_summary.digest)'
+          image: us-central1-docker.pkg.dev/merit-aid-app/merit-aid/frontend@sha256:cc40d75d227a9c960b8eeb2c1bc2f1c838609000611ca1fe75141b4a98d23b25
           ports: [{ containerPort: 80 }]
           # Static files behind nginx: ready as soon as it binds. The probe exists so
           # the LB has a real target, and so a crashed nginx is replaced.

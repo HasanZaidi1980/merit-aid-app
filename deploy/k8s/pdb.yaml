@@ -1,0 +1,38 @@
+# PodDisruptionBudgets: keep one replica serving through a VOLUNTARY disruption.
+#
+# What this does and does not cover, precisely, because the distinction decides
+# whether it is worth having:
+#
+#   * It DOES cover voluntary disruptions -- `kubectl drain`, a GKE node
+#     auto-upgrade, a maintenance event. Those go through the Eviction API, which
+#     respects a PDB and refuses to take the last healthy pod.
+#   * It does NOT cover Spot preemption. A preemption is involuntary: the VM is
+#     taken and the kubelet is gone. No budget can veto that. The protection there
+#     is `replicas: 2` with required anti-affinity across two nodes, which is
+#     already in place and has already absorbed one real preemption.
+#
+# So this closes the gap the anti-affinity does not: a node upgrade that drains
+# both nodes in sequence without waiting for the first pod to come back. GKE
+# auto-upgrade is the likeliest voluntary disruption on this cluster, and it is the
+# one thing that could take the whole service down without anybody touching it.
+#
+# minAvailable: 1 and not 2 -- with 2 replicas, minAvailable: 2 would forbid every
+# drain outright and block node upgrades entirely, which trades one failure mode
+# for a worse one.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: backend }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: frontend }

@@ -95,11 +95,38 @@ spec:
             limits:   { cpu: "500m", memory: "512Mi" }
       containers:
         - name: backend
-          image: us-central1-docker.pkg.dev/merit-aid-app/merit-aid/backend:latest
+          # Pinned by DIGEST, not by `:latest`. With a mutable tag, any pod restart
+          # -- a Spot preemption, a node upgrade, an OOM -- pulls whatever was last
+          # pushed to that tag, so a half-finished image on the registry becomes the
+          # running code at a moment nobody chose. One preemption has already
+          # happened here (node bbfh, 2026-11-21T04:54:52, recreated 21s later), so
+          # this is not hypothetical.
+          #
+          # Refresh it deliberately after a push:
+          #   gcloud artifacts docker images describe us-central1-docker.pkg.dev/merit-aid-app/merit-aid/backend:latest           #     --format='value(image_summary.digest)'
+          image: us-central1-docker.pkg.dev/merit-aid-app/merit-aid/backend@sha256:5682970461e3f3739bf5b0ab85e5a65707cdf0d917ead0a31eae539bbc9c02c9
           ports: [{ containerPort: 8000 }]
           env:
             - name: DATA_DIR
               value: /data
+          # The app had been running as uid 0 for a week. It has no reason to: it
+          # reads two directories and binds a port above 1024. Dropping root costs
+          # nothing here and removes the step between "someone finds a bug in a
+          # dependency" and "someone is root in the container".
+          #
+          # Applies to this container only. The init container stays root because it
+          # has to write the dataset into the volume; it writes world-readable files,
+          # so uid 1000 can read them afterwards (verified: the pod serves 1,907
+          # colleges as uid 1000).
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
             - { name: data, mountPath: /data, readOnly: true }
           # Boot builds the whole dataset (read, merge, clean, score 1,907 rows), so

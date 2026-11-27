@@ -107,8 +107,21 @@ docker push $REG/frontend:latest && docker push $REG/frontend:$SHA
 `--platform linux/amd64` matters: the nodes are x86, and an image built on an ARM machine
 will pull fine and then crash-loop with an exec format error.
 
-The manifests reference `:latest`; the commit tag is pushed alongside it so you can always
-tell which build is live (`gcloud artifacts docker images list $REG --include-tags`).
+**The manifests pin image DIGESTS, not tags** (since 2026-11-27), so pushing is not
+enough — you must refresh the digest or `kubectl apply` will be a no-op that leaves the
+old image running:
+
+```bash
+for img in backend frontend; do
+  gcloud artifacts docker images describe $REG/$img:latest --format='value(image_summary.digest)'
+done
+# paste each sha256:... into the matching `image:` line in deploy/k8s/<img>.yaml
+```
+
+Why bother: with a mutable `:latest`, any pod restart — a Spot preemption, a node
+upgrade, an OOM kill — pulls whatever was last pushed. That turns a half-finished image
+on the registry into the running code at a moment nobody chose. One preemption has
+already restarted a pod on this cluster.
 
 *(There is no step here for an API key. The RAG panel was removed in Phase 3.5, so this
 deploy has no secret, no Secret Manager dependency and no `secretKeyRef` anywhere.)*
@@ -151,6 +164,39 @@ key material appears anywhere in the manifests.
 
 ---
 
+## Monitoring
+
+```bash
+gcloud monitoring uptime list-configs          # merit-aid-health -> /api/health, 5 min
+gcloud alpha monitoring policies list          # "merit-aid: site not answering"
+```
+
+An incident opens when the check fails for five minutes, and the policy carries its own
+runbook: check `kubectl get pods -o wide` first (a Spot preemption recreates the node,
+which takes a couple of minutes), then `curl http://136.81.186.158/api/meta` — a 503
+there names the missing dataset file, which means the init container could not reach the
+bucket.
+
+Proven, not assumed: a deliberately failing decoy check delivered an incident in ~300
+seconds on 2026-11-27.
+
+> **A health check must target a path under `/api/`.** nginx serves the SPA with
+> `try_files $uri $uri/ /index.html`, so **every** path that is not `/api/*` returns
+> 200 — including nonsense. A check on `/` or on a mistyped path is green even with the
+> backend completely dead. This was a real bug in the first version of the check:
+> ```
+> /api/health      HTTP 200       /not-an-api-path   HTTP 200
+> /api/nope        HTTP 404       /C:/anything       HTTP 200
+> ```
+
+**No human is notified yet.** The policy's only channel is a Pub/Sub topic used to prove
+delivery. Add an email channel:
+
+```bash
+gcloud alpha monitoring channels create --display-name="hasan" --type=email   --channel-labels=email_address=YOU@example.com
+gcloud alpha monitoring policies update 6020692583677610040   --add-notification-channels=projects/merit-aid-app/notificationChannels/<NEW_ID>
+```
+
 ## Verifying a deploy
 
 ```bash
@@ -186,16 +232,19 @@ API on 2026-11-20, not from a blog post):
 |---|---|---|---|
 | Zonal GKE cluster management fee | $0.100000 / hour | $2.40 | $73.00 |
 | 2 × e2-medium Spot nodes | $0.012440 / vCPU-hr + $0.001666 / GiB-hr → $0.019104/node-hr | $0.92 | $27.90 |
-| External Application Load Balancer | not read from the catalog API | ~$0.60 | ~$18 (unverified) |
+| External Application Load Balancer | $0.025000 / hour ("Forwarding Rule Minimum Global", SKU-verified 2026-11-27) | $0.60 | $18.25 |
 | Static external IP | $0.010000 / hour (base "Static Ip Charge" SKU) | up to $0.24 | up to $7.30 |
+| Monitoring (1 uptime check, 1 policy, Pub/Sub) | within free tiers | $0.00 | ~$0.00 |
 | GCS storage (20.5 MiB) + Artifact Registry (~1 GB) | negligible | <$0.01 | ~$0.15 |
 
 **Roughly $3.50–4.00 a day, $100–120 a month**, which is at the top of the original
-$70–100 estimate. Two caveats on precision: the load-balancer line is the one figure not
-taken from a primary source, and the static-IP SKU exists at $0.010/hour but Google
-charges it differently for an address that is attached to a live forwarding rule than for
-one sitting idle — the billing detail will show which applies here, since the address was
-only reserved on 2026-11-25.
+$70–100 estimate. Every line is now taken from Google's own price list except one: the
+static-IP SKU exists at $0.010/hour, but Google charges it differently for an address
+attached to a live forwarding rule than for one sitting idle, and the catalog does not
+say which applies. The billing detail settles it.
+
+Actual accrual at 163 hours of uptime (2026-11-27): **$27.10 at list price**, or about
+$10.76 if the free zonal-cluster credit is applying.
 
 **The GKE free tier may cancel most of this.** Google gives one zonal cluster per billing
 account a $74.40/month credit. No other GKE cluster exists in any project on this billing
@@ -263,6 +312,14 @@ images, `kubectl apply -f deploy/k8s/`. About **15–20 minutes**, most of it th
 
 ## Operational notes
 
+- **A voluntary drain cannot take both replicas.** PodDisruptionBudgets
+  (`deploy/k8s/pdb.yaml`, `minAvailable: 1`) make the Eviction API refuse the second
+  eviction with a 429, which is what protects the service during a GKE node
+  auto-upgrade. It does *not* protect against Spot preemption — that is involuntary and
+  no budget can veto it; two replicas on two nodes is what covers that.
+- **The backend runs as uid 1000, not root**, with all capabilities dropped. If you add
+  a feature that needs to write to the container filesystem, it will fail — write to
+  the mounted volume or add an explicit `emptyDir`.
 - **Spot nodes can be preempted at any time.** That is the whole reason for `replicas: 2`
   with *required* pod anti-affinity: the two backends must be on different nodes, or one
   preemption takes the service down. Verify with `kubectl get pods -o wide` after any

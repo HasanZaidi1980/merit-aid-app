@@ -32,7 +32,7 @@ owning doc when a fact changes.
 | Tests | ✅ 88 tests, in CI | Scoring, the flag split, net-price coalescing, COA basis, rate scales, weights, merit policy, the year on the row, verdict expiry — plus (Phase 6) the real `data.py` read path against a synthetic fixture dataset, all five endpoints via `TestClient`, and a smoke test that boots uvicorn. `ruff` + `pytest` + smoke run on every push. |
 | **Real data** | ✅ **Installed & validated** | Real IPEDS 2022-23: 1,907 colleges (726 public / 1,095 private nonprofit / 86 for-profit). 5 of 5 reference metrics match. |
 | Error handling | ✅ Done | Server: bad params get a 4xx naming them, a missing dataset a 503 naming the file. UI: both fetches distinguish *nothing answered* from *answered and said no*, quote the server's own message, and offer retry; a filter that matches nothing says so separately. Verified on the live site by scaling the backend to zero. |
-| Deployment | ✅ **Live 2026-11-20** | `http://136.81.186.158/` — **static IP** (reserved 2026-11-25), GKE zonal cluster, 2 Spot e2-medium nodes, 2 replicas per service on separate nodes, data fetched from GCS on pod start. ~$3.50-4.00/day, ~$20 spent in the first five days. HTTP-only by choice — see the deferred decision under Phase 9. Teardown cycle in `DEPLOYMENT.md`; **still running for the demo**. |
+| Deployment | ✅ **Live 2026-11-20**, reviewed 2026-11-27 | `http://136.81.186.158/` — **static IP** (reserved 2026-11-25), digest-pinned images, PDBs, uptime alerting, non-root backend, GKE zonal cluster, 2 Spot e2-medium nodes, 2 replicas per service on separate nodes, data fetched from GCS on pod start. ~$3.50-4.00/day, ~$20 spent in the first five days. HTTP-only by choice — see the deferred decision under Phase 9. Teardown cycle in `DEPLOYMENT.md`; **still running for the demo**. |
 
 **One-line summary:** the app runs on real, validated IPEDS data and produces defensible
 rankings — Stanford #1 at $77,662 sticker against a $7,332 net price for a mid-income
@@ -759,6 +759,55 @@ bill in 24-48 hours, not a measurement.
       dependencies rather than from having run it. That is stated there as untested,
       and it stays stated until someone runs it.
 
+### HTTPS: analysed 2026-11-27, awaiting Hasan's decision
+
+Hasan wants HTTPS only if it adds no real cost or risk. It adds a little of both, and
+the numbers below are measured rather than recalled.
+
+**A certificate cannot be issued to the IP.** Not an opinion — Google rejects it:
+
+```
+$ gcloud compute ssl-certificates create test-ip-cert --domains=136.81.186.158 --global
+ERROR: Invalid value for field 'resource.managed.domains[0]': '136.81.186.158'.
+       Invalid domain name specified.
+```
+
+So HTTPS requires buying a domain. **That is the only real cost, and it is Hasan's
+call, not mine. Nothing has been purchased.**
+
+| Item | Cost | Source |
+|---|---|---|
+| `meritaidfinder.com` | **$12.00/year**, AVAILABLE | `gcloud domains registrations search-domains` |
+| `meritaid.app` | $14.00/year, AVAILABLE | same |
+| Google-managed certificate (classic, what a GKE `ManagedCertificate` uses) | **no SKU in the price list** → free | Cloud Billing Catalog API, Certificate Manager + Networking services |
+| Certificate Manager (a *different*, newer product) | $0.10 / certificate / month | Catalog API, SKU "Certificates usage" |
+| Second (HTTPS) forwarding rule on the existing load balancer | **$0, almost certainly** | Catalog API: "Cloud Load Balancer Forwarding Rule **Minimum** Global" $0.025/hr, "Forwarding Rule **Additional** Global" $0.010/hr |
+
+On that last line, precisely: the load balancer is billed as a flat *minimum* that
+covers a set of forwarding rules, plus an *additional* per-rule charge beyond it.
+There is one rule today and HTTPS would make two, which is inside the documented
+included count of five — so the expected marginal cost is **$0/month**, and the
+worst case if the included count were one is **$7.30/month**. The rate is verified;
+the threshold is not, because the catalog does not publish it.
+
+**The real risk is time, not money.** A managed certificate only begins issuing once
+DNS resolves to the load balancer, and issuance has historically taken 15–60 minutes
+and occasionally far longer. Days before a presentation, that is the exposure.
+
+**What breaks if the certificate is not ready on the day:** nothing, if it is done the
+way below. HTTP stays serving throughout — a GKE Ingress keeps its HTTP forwarding
+rule unless `kubernetes.io/ingress.allow-http: "false"` is set, so the plan is to add
+HTTPS *alongside* and leave the existing `http://136.81.186.158/` path untouched. A
+certificate stuck in `PROVISIONING` means `https://` does not work yet; it does not
+affect `http://`. A redirect would only be considered after the certificate reports
+`ACTIVE`.
+
+**The static IP is already reserved and Terraform-managed**, so it is a valid A-record
+target. That part is done.
+
+**If Hasan declines**, the consequence stays as recorded below, now with one
+measured addition: browsers do not merely warn, they can fail outright.
+
 ### Deferred decision: no custom domain, so the site is HTTP-only
 
 *Recorded 2026-11-25 so this reads as a choice and not an oversight.* Hasan decided
@@ -780,9 +829,158 @@ The consequences, which are real and worth stating plainly:
   data; it reads public IPEDS figures and sends filter values. The exposure from plain
   HTTP here is a trust signal, not a data risk.
 
-Reversible in about 20 minutes whenever a domain is wanted: point an A record at
-`136.81.186.158` — which is static now, so it is a valid DNS target — then attach a
-`ManagedCertificate` to the Ingress.
+Reversible in about 20 minutes of work plus certificate provisioning whenever a
+domain is wanted: point an A record at `136.81.186.158` — which is static now, so it
+is a valid DNS target — then attach a `ManagedCertificate` to the Ingress. See the
+HTTPS analysis above for what that costs and what it risks.
+
+### Phase 10 — Production review ✅ *2026-11-27*
+
+Four things added, eight rejected. Every decision below was made from a measurement
+taken against the running cluster, and each addition was verified by making it fire
+rather than by reading the manifest back.
+
+**What the measurements say.** These are the numbers the decisions rest on:
+
+| Measurement | Value | How |
+|---|---|---|
+| Backend CPU / memory, idle | **3m / 81Mi** | `kubectl top pod` |
+| Backend CPU at 6 concurrent clients (50 rps) | **~430m** each, p50 112ms, p95 165ms | 70s load test from this machine |
+| Backend CPU at 24 concurrent clients (74 rps) | **917m / 822m**, p95 498ms, 22 errors in 7,423 | 100s load test |
+| Node allocatable CPU (e2-medium, shared core) | **940m**, of which GKE's own system pods request ~680m | `kubectl describe node` |
+| Spot preemptions since deploy | **1 in 13.6 node-days** (node `bbfh`, 2026-11-21T04:54:52, recreated 21s later, no outage) | `gcloud compute operations list` |
+
+#### Added
+
+- [x] **Images pinned by digest, not `:latest`** *(2026-11-27)*. With a mutable tag,
+      any pod restart pulls whatever was last pushed, so a half-finished image becomes
+      the running code at a moment nobody chose — and a preemption has already
+      restarted a pod here once. Verified: `kubectl get pods -o jsonpath` shows
+      `backend@sha256:5682970461e3…` on both replicas.
+
+      **Operational consequence, deliberately accepted:** a future deploy must refresh
+      the digest in the manifest or `kubectl apply` is a no-op that leaves the old
+      image running. The command is in `DEPLOYMENT.md` step 3.
+
+- [x] **PodDisruptionBudgets, `minAvailable: 1`** *(2026-11-27)*. This covers the gap
+      the anti-affinity does not: a voluntary disruption — `kubectl drain`, a GKE node
+      auto-upgrade — draining both nodes in sequence without waiting. Verified by
+      firing the Eviction API twice:
+
+      ```
+      evicting backend-cc45f4f5d-7crxj  -> {"status":"Success","code":201}
+      evicting backend-cc45f4f5d-d2nxt  -> 429 TooManyRequests:
+          Cannot evict pod as it would violate the pod's disruption budget.
+      ```
+
+      Without the budget both evictions succeed and the service goes to zero. The site
+      answered 200 throughout. It does **not** protect against Spot preemption, which
+      is involuntary — nothing can veto that, and `replicas: 2` across two nodes is
+      what covers it.
+
+- [x] **Uptime check and alert policy, with the delivery path proven** *(2026-11-27)*.
+      A 5-minute check on `/api/health` and a policy that opens an incident when it
+      fails, carrying a runbook. Verified end to end: a deliberately failing decoy
+      check produced a delivered alert in **~300 seconds**, with the incident payload
+      arriving on a Pub/Sub channel. Decoy then deleted; the real check reports 100%.
+
+      **This is also how a monitoring bug was caught.** The first version of the check
+      was created from Git Bash, which rewrote `/api/health` into
+      `/C:/Program Files/Git/api/health`. That check passed — because nginx's SPA
+      catch-all (`try_files $uri $uri/ /index.html`) answers **200 for any path that
+      is not under `/api/`**. Measured:
+
+      ```
+      /api/health        HTTP 200        /not-an-api-path   HTTP 200
+      /api/nope          HTTP 404        /C:/anything       HTTP 200
+      ```
+
+      So a health check on any non-`/api/` path is green even with the backend dead —
+      a monitor that cannot observe the failure it exists for. Only an `/api/` path
+      works, which is what the check uses now.
+
+      **One step left for a human:** there is no email channel, because adding one
+      means putting an address into cloud config. One line adds it:
+      `gcloud alpha monitoring channels create --display-name="me" --type=email
+      --channel-labels=email_address=YOU@example.com`, then attach it with
+      `gcloud alpha monitoring policies update 6020692583677610040
+      --add-notification-channels=…`. Until then incidents are visible in
+      Monitoring → Alerting but nobody is told.
+
+- [x] **The backend no longer runs as root** *(2026-11-27)*. It had been uid 0 for a
+      week with no reason to be: it reads two directories and binds a port above 1024.
+      Now `runAsNonRoot`, uid/gid 1000, `allowPrivilegeEscalation: false`, all
+      capabilities dropped, `seccompProfile: RuntimeDefault`. Verified in the pod:
+      `uid=1000(?) gid=1000` and it still serves 1,907 colleges. The init container
+      stays root because it writes the dataset into the volume.
+
+#### Rejected, with the reason
+
+- **Horizontal Pod Autoscaler — rejected, and this is the one worth explaining.**
+      Not because nothing would trigger it: the measurement above shows the backend at
+      ~430m under a realistic 50 rps, which is **4× its 100m request**, so an HPA
+      targeting 70% of requests would want to scale immediately and keep wanting to.
+
+      It could not do anything about it. The backend has **required** pod
+      anti-affinity on hostname, so backend replicas are capped at the number of nodes
+      — two. The node pool is fixed at `node_count = 2` with no cluster autoscaler. An
+      HPA would therefore sit permanently at `desired 6 / current 2` with a third pod
+      Pending on "didn't match pod anti-affinity rules", which is worse than absent:
+      it is a control that reports a decision it can never carry out.
+
+      The real throughput lever here is node capacity, not replica count — the pods
+      are bounded by a 940m shared-core node, not by how many of them there are. At
+      the load this app will actually see (a room of people clicking is single-digit
+      concurrency, measured at 50 rps with p95 165ms and one error in 3,514) there is
+      nothing to solve.
+
+- **Cluster autoscaler / bigger nodes — rejected for now, available if wanted.** This
+      is the honest fix for throughput, and it costs money: node count or machine size
+      is the only thing that raises the ceiling. Not justified at measured demo load.
+
+- **Converting the node pool off Spot — rejected on the data.** Measured preemption
+      rate is 1 per 13.6 node-days, the one that happened recovered in 21 seconds and
+      caused no outage, and the two-replica anti-affinity design absorbed it. Paying
+      roughly $14/month more to remove a risk that has already been survived once is
+      not a good trade. The residual exposure is a *simultaneous* preemption of both
+      nodes, which would mean a few minutes of downtime; the free mitigation is to
+      have `docker compose up` ready locally during the presentation rather than to
+      buy on-demand VMs.
+
+- **NetworkPolicy — rejected.** It needs the Calico addon enabled on the cluster,
+      which is a cluster-level mutation days before a presentation, and the thing it
+      would protect is two pods with no secrets, no credentials and no write access to
+      anything. It would also have to allow the Google health-check ranges explicitly,
+      which is a new way to break the load-balancer path. Worth doing in a cluster
+      that hosts more than one application.
+
+- **Blue-green deploys — rejected.** A second full environment needs twice the nodes.
+      Rolling is already correct here and already constrained: `maxSurge: 0` (forced by
+      the required anti-affinity), so a deploy dips to one replica for about 30
+      seconds. The demo-week answer is not to deploy during the demo.
+
+- **Secrets management — moot.** There are no secrets. The RAG panel was the only
+      consumer of `ANTHROPIC_API_KEY` and it was deleted in Phase 3.5;
+      `secretmanager.googleapis.com` is not even enabled.
+
+- **Storage — already solved in Phase 8.** The dataset comes from GCS on every pod
+      start into an `emptyDir`, which is what makes a restart survivable. A PVC would
+      make the two replicas mutually exclusive.
+
+- **Workload Identity — rejected for now.** The nodes use the default compute service
+      account with `cloud-platform` scope, which is broader than the bucket read they
+      need. Tightening it means enabling Workload Identity on the cluster and
+      recreating the node pool: the right change, the wrong week.
+
+- **`readOnlyRootFilesystem` — rejected for nginx.** It needs writable mounts for
+      `/var/cache/nginx` and `/var/run`, so it is a change with a real chance of
+      breaking the frontend for a hardening benefit on a container that serves static
+      files. The backend's root filesystem is already effectively read-only in
+      practice (it writes nothing).
+
+- **Artifact Registry vulnerability scanning — rejected.** Billed per image scan, and
+      it produces a report nobody will act on before the presentation.
+
 
 ---
 
