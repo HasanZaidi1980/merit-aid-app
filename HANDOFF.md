@@ -131,17 +131,20 @@ the pandemic year, which reshuffles the top of the rankings for a reason unrelat
 college value. The branch is kept; switching is `IPEDS_YEAR=2023-24` plus the six new
 CSVs in the bucket.
 
-Three things are genuinely outstanding, and none of them is code:
+Two things are genuinely outstanding, and neither is code:
 
-1. **No human is notified when the site breaks** — a human action, deliberately. The
-   alert policy's only channel is a Pub/Sub topic used to prove delivery; adding an
-   email channel means putting an address into cloud config, so the two commands sit in
-   `DEPLOYMENT.md` → Monitoring with a placeholder instead.
-2. **Two measured cost savings are left on the table on purpose**, both because they
+1. **Two measured cost savings are left on the table on purpose**, both because they
    mutate the cluster: dropping the node boot disks from GKE's default 100 GB (~$13/mo,
    recreates the node pool) and trimming the eleven managed-Prometheus component groups
    (~$7/mo, control-plane change). Take them after the presentation, not before.
-3. **Teardown is still unverified**, by choice — the stack is up for the demo.
+2. **Teardown is still unverified**, by choice — the stack is up for the demo.
+
+**A human is notified now** *(2026-11-28)*. An email channel sits on the alert policy
+beside the Pub/Sub one, and delivery was proven with a failing decoy check that tripped a
+real incident in **~292 seconds**. The address lives in cloud config, never in this repo.
+One policy covers both uptime checks — it filters on `resource.type = "uptime_url"` with
+no `check_id`, so adding a check needs no policy change. See `DEPLOYMENT.md` →
+Monitoring for the recipe and for what the test does *not* prove.
 
 Recent work: Phase 3 replaced the hand-summed cost of attendance with the basket
 IPEDS itself nets against (459 impossible negative discounts → 0); rate scaling became

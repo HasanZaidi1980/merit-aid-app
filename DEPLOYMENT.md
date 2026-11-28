@@ -227,13 +227,114 @@ gcloud monitoring uptime update <ID> --validate-ssl=true
 Quote the whole `--resource-labels` string. Unquoted, PowerShell splits it and gcloud
 rejects it with "uptime_url check has malformed host".
 
-**No human is notified yet.** The policy's only channel is a Pub/Sub topic used to prove
-delivery. Add an email channel:
+### Who gets told
+
+**An email channel exists as of 2026-11-28** — channel `15116863192913042102`, display
+name `hasan`. **The address is deliberately not recorded in this repo**, which is public;
+read it from the live config if you need it:
+
+```bash
+gcloud alpha monitoring channels describe 15116863192913042102 --format="value(labels.email_address)"
+```
+
+**There is ONE alert policy, and it covers both uptime checks.** Worth stating because
+the check names invite the opposite assumption: there is no `merit-aid-health` policy and
+no `merit-aid-https` policy. `6020692583677610040` is the only one, and its condition
+filter carries **no `check_id` restriction** —
+
+```
+filter: resource.type = "uptime_url" AND metric.type = ".../uptime_check/check_passed"
+groupByFields: [resource.label.host, metric.label.check_id]
+```
+
+— so it matches every uptime check in the project and, because it groups by check, raises
+a **separate incident per check**. Attaching a channel to this one policy notifies on
+both. Adding a check needs no policy change, which is also the trap: **a check that
+cannot fail is silently covered by an alert that can never fire.**
+
+To recreate the channel and attach it:
 
 ```bash
 gcloud alpha monitoring channels create --display-name="hasan" --type=email   --channel-labels=email_address=YOU@example.com
+
 gcloud alpha monitoring policies update 6020692583677610040   --add-notification-channels=projects/merit-aid-app/notificationChannels/<NEW_ID>
 ```
+
+> **`--add-notification-channels`, never `--set-notification-channels`.** `--set`
+> *replaces* the list, which would silently drop the Pub/Sub channel — and Pub/Sub is the
+> only witness that lets anyone verify delivery without access to somebody's inbox.
+> `--add` appends. `--clear` and `--remove` also exist; neither is wanted here.
+
+**gcloud cannot verify a channel or send a test notification.** The subcommands are
+`create`, `delete`, `describe`, `list`, `update` and `config` — there is no `verify` and
+no send-test. "Send test notification" is **Console-only** (Monitoring → Alerting →
+Notification channels → the row's ⋮ menu). So delivery has to be proven by causing a real
+incident; see below.
+
+**The API reports nothing about verification for an email channel.** `verificationStatus`
+is absent from the create response and from `describe --format=json` entirely — not
+`VERIFIED`, not `UNVERIFIED`, absent — so **configuration cannot tell you whether email
+will arrive.** That is not a gap worth arguing with; it is a reason to test.
+
+### Proving delivery (the only way, since there is no test-notification API)
+
+Add a decoy uptime check on a path that genuinely fails. The policy matches every check
+in the project, so the decoy trips it without touching the live site — `/api/nope`
+returns a real 404 while `/` keeps serving.
+
+```powershell
+gcloud monitoring uptime create "merit-aid-decoy-delivery-test" --resource-type=uptime-url `
+  --resource-labels="host=136.81.186.158,project_id=merit-aid-app" `
+  --path="/api/nope" --port=80 --protocol=http --period=1 --timeout=10
+
+# drain the subscription FIRST, or an old message looks like a new success
+gcloud pubsub subscriptions pull merit-aid-alerts-sub --auto-ack --limit=10
+
+# then poll for the incident
+gcloud pubsub subscriptions pull merit-aid-alerts-sub --auto-ack --limit=1 --format="value(message.data)"
+
+gcloud monitoring uptime delete "<DECOY_ID>" --quiet     # always clean up
+```
+
+**Measured 2026-11-28, with the email channel attached:** the incident arrived on
+Pub/Sub after **~292 seconds** (Phase 10's run was ~300s, so this is reproducible), and
+the payload named the decoy rather than the real checks:
+
+```
+policy_name    : merit-aid: site not answering
+check_id       : merit-aid-decoy-delivery-test-FbTVeNGhksM
+observed_value : 6.000          <- 6 probers failing, threshold > 1
+state          : open
+incident_id    : 0.ofjiep7k9nom
+```
+
+The email it generates carries this subject, which is what to search an inbox for:
+
+```
+[ALERT - No severity] Uptime check failing for 5 minutes on merit-aid-app
+Uptime Check URL labels {project_id=merit-aid-app, host=136.81.186.158}
+```
+
+Independent confirmation the probers themselves agree, read from the Monitoring REST API
+(there is no `gcloud monitoring time-series` subcommand, so this needs a bearer token and
+`x-goog-user-project`):
+
+```
+merit-aid-decoy-delivery-test   136.81.186.158        pass=  0  FAIL=  9
+merit-aid-health                136.81.186.158        pass= 81  FAIL=  0
+merit-aid-https                 merit-aid-finder.com  pass= 81  FAIL=  0
+```
+
+`merit-aid-https` passing there is a second result worth keeping: it checks with
+`validate-ssl=true`, so Google's own probers trust the certificate from six locations.
+
+> **What this test can and cannot prove.** It proves the policy fired, that the payload
+> identified the right check, and that the email channel was attached to the policy when
+> it fired. It does **not** prove an email reached an inbox — Cloud Monitoring exposes no
+> per-channel delivery status, and there is no monitoring-notification log in this project
+> (`gcloud logging logs list` shows only GKE, audit and node logs). The last link in the
+> chain has to be confirmed by the person who owns the mailbox, and Gmail does sometimes
+> file these under spam.
 
 ## Verifying a deploy
 

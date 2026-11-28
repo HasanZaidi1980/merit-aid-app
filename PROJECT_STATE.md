@@ -966,6 +966,50 @@ Also re-measured: the nginx catch-all still applies over TLS —
 `https://merit-aid-finder.com/api/nope` → 404 while `/not-an-api-path` → 200 — so the
 check's path still has to sit under `/api/` to discriminate at all.
 
+#### A human is finally told when it breaks *(2026-11-28)*
+
+The last open item from Phase 10. An email channel (`15116863192913042102`, display name
+`hasan`) is attached to the alert policy alongside the Pub/Sub channel. **The address is
+not recorded in this repo** — it is read from the live config with
+`gcloud alpha monitoring channels describe 15116863192913042102`.
+
+**There is one alert policy, not two, and it already covered both uptime checks.** Worth
+recording because the check names invite the opposite assumption: `merit-aid-health` and
+`merit-aid-https` are *checks*, not policies. Policy `6020692583677610040` carries no
+`check_id` restriction and groups by `resource.label.host` and `metric.label.check_id`, so
+it matches every check in the project and raises a separate incident per check. Attaching
+one channel covered both. The corollary is a trap worth naming: **adding a check needs no
+policy change, so a check that cannot fail is silently "covered" by an alert that can
+never fire** — which is exactly the mangled-path bug from Phase 10 and the
+`--validate-ssl` default above.
+
+Attached with `--add-notification-channels`, never `--set-notification-channels`: `--set`
+replaces the list and would have dropped the Pub/Sub channel, which is the only witness
+that makes delivery verifiable by anyone without inbox access.
+
+**Delivery proven rather than assumed, and it took ~292 seconds.** A decoy check on
+`/api/nope` (a real 404; the live site never involved) tripped the policy, and the
+incident arrived on Pub/Sub naming the decoy specifically:
+
+```
+policy_name    : merit-aid: site not answering
+check_id       : merit-aid-decoy-delivery-test-FbTVeNGhksM
+observed_value : 6.000     <- six probers failing against a threshold of >1
+state          : open
+```
+
+That reproduces Phase 10's ~300s to within a few seconds. Decoy deleted afterwards; both
+real checks were `pass=81 FAIL=0` throughout, read from the Monitoring REST API.
+
+**Two things could not be verified, and both are stated rather than glossed.** First,
+whether the address needs confirming: `verificationStatus` is **absent** from the email
+channel's API representation — not `VERIFIED`, not `UNVERIFIED`, missing — and gcloud has
+no `verify` subcommand and no send-test (that is Console-only), so configuration cannot
+answer it. Second, whether an email actually reached the inbox: Cloud Monitoring exposes
+no per-channel delivery status and this project has no monitoring-notification log, so the
+final link belongs to whoever owns the mailbox. The policy firing with the channel
+attached is as far as the cloud side can be taken.
+
 #### Apex first, `www` second — deliberately, not an omission
 
 A Google-managed certificate does not go ACTIVE until **every** name on it validates by
