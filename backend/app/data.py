@@ -21,15 +21,49 @@ class DatasetUnavailable(RuntimeError):
     """
 
 
+def _resolve(filename: str) -> str | None:
+    """Find a file in DATA_DIR, ignoring case. None if it is not there.
+
+    IPEDS does not ship consistent casing -- the 2023-24 download contains
+    `HD2023.csv` next to `sfa2223.csv` -- and the 2022-23 set in this repo's data
+    directory was renamed to uppercase by hand when it was installed. On Windows that
+    difference is invisible; in the container it is a missing-file 503. Resolving the
+    name instead of trusting it removes a whole class of "worked locally" failure.
+    """
+    path = os.path.join(config.DATA_DIR, filename)
+    if os.path.exists(path):
+        return path
+    try:
+        entries = os.listdir(config.DATA_DIR)
+    except OSError:
+        return None
+    want = filename.lower()
+    for entry in entries:
+        if entry.lower() == want:
+            return os.path.join(config.DATA_DIR, entry)
+    return None
+
+
 def _read(name: str) -> pd.DataFrame:
-    path = os.path.join(config.DATA_DIR, config.FILES[name])
-    if not os.path.exists(path):
+    path = _resolve(config.FILES[name])
+    if path is None:
         raise DatasetUnavailable(
             f"Missing IPEDS file: {config.FILES[name]} in {config.DATA_DIR}. "
             f"Run scripts/make_sample_data.py for a demo, or add the real files."
         )
     # IPEDS files are latin-1; UNITID is the join key everywhere.
-    return pd.read_csv(path, encoding="latin-1", low_memory=False)
+    df = pd.read_csv(path, encoding="latin-1", low_memory=False)
+
+    # Strip a byte-order mark off the first column name. HD2023.csv ships with a
+    # UTF-8 BOM (verified: its first three bytes are ef bb bf) and no other file in
+    # either release does. Read as latin-1 those bytes decode to the three characters
+    # "ï»¿", so the first column arrives named "ï»¿UNITID" and every join on UNITID
+    # fails with a KeyError that names a column nobody wrote. Decoding the file as
+    # utf-8-sig instead would fix the BOM and break on the genuinely latin-1 bytes
+    # elsewhere in IPEDS text, so the mark is removed from the header rather than the
+    # encoding being changed.
+    df.columns = [str(c).lstrip("﻿").removeprefix("ï»¿") for c in df.columns]
+    return df
 
 
 def _clean_missing(df: pd.DataFrame, cols) -> pd.DataFrame:

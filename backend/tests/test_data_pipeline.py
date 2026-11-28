@@ -15,6 +15,7 @@ The checks are modelled on the ones that caught real defects here (CLAUDE.md §1
 impossible values, who is actually in the rows, and reproducing a known number.
 """
 import os
+import pathlib
 
 import numpy as np
 import pandas as pd
@@ -37,6 +38,10 @@ NO_TUITION, TWO_YEAR, NON_DEGREE = 999005, 999006, 999007
 ABSENT_FROM_SFA, GRANT_OVER_COST = 999008, 999009
 NO_BAND_GRANT, FOR_PROFIT, UNCLASSIFIED = 999010, 999011, 999012
 SUPPRESSED_GRANT = 999013
+
+# The UTF-8 byte-order mark, spelled as bytes so no escape can be mangled in
+# transit. HD2023.csv from IPEDS begins with exactly these three bytes.
+BOM = bytes([0xEF, 0xBB, 0xBF])
 
 SURVIVES = {HEALTHY_PRIVATE, HEALTHY_PUBLIC, SENTINELS, NO_GRAD_RATE,
             GRANT_OVER_COST, NO_BAND_GRANT, FOR_PROFIT, UNCLASSIFIED}
@@ -250,3 +255,54 @@ def test_the_fixtures_are_never_the_app_default():
     assert len(hd) == 13
     assert hd["INSTNM"].str.startswith("ZZ SYNTHETIC").all()
     assert (hd["UNITID"] >= 999000).all()
+
+
+# --------------------------------------------------------------------------
+# Found while reading the IPEDS 2023-24 files (Phase 7) rather than trusting them,
+# and ported to main because neither defect has anything to do with which year is
+# loaded: both are the loader hardcoding an assumption about how IPEDS names and
+# encodes its files. They are quiet on the 2022-23 set only because the archive in
+# this repo was normalised to uppercase and carries no BOM.
+#
+# Both would otherwise have been a missing-file or missing-column error at
+# load time, in the container, on a dataset nobody could inspect from a browser.
+# --------------------------------------------------------------------------
+
+def test_a_byte_order_mark_does_not_rename_the_join_key(data_dir, tmp_path):
+    """HD2023.csv ships with a UTF-8 BOM and no other IPEDS file in either release
+    does (verified: its first three bytes are ef bb bf). Read as latin-1 -- which the
+    rest of the file requires -- those bytes decode to "ï»¿", so the first column
+    arrives named "ï»¿UNITID" and every join silently loses its key."""
+    src = pathlib.Path(SYNTHETIC)
+    for f in src.glob("*.csv"):
+        raw = f.read_bytes()
+        # Put a BOM on the HD file only, exactly as IPEDS ships it.
+        prefix = BOM if f.name == "HD2022.csv" else b""
+        (tmp_path / f.name).write_bytes(prefix + raw)
+
+    assert (tmp_path / "HD2022.csv").read_bytes()[:3] == BOM
+
+    data_dir(tmp_path)
+    df = data.build_dataset()
+    assert "UNITID" in df.columns
+    mangled = BOM.decode("latin-1")
+    assert not any(c.startswith(mangled) or c.startswith("﻿") for c in df.columns)
+    assert set(df["UNITID"]) == SURVIVES
+
+
+def test_a_filename_resolves_regardless_of_case(data_dir, tmp_path):
+    """IPEDS ships `HD2023.csv` next to `adm2023.csv` and `sfa2223.csv` in the same
+    download -- verified against the extracted 2023-24 zips on 2026-11-28. The 2022-23
+    archive this repo ships (merit-aid-data.zip) is uniformly uppercase, so an
+    exact-case lookup happens to work on it; that is normalisation in the archive, not
+    a guarantee from IPEDS. Windows hides a case difference and Linux does not, which
+    is the shape of a bug that only appears in the container."""
+    for f in pathlib.Path(SYNTHETIC).glob("*.csv"):
+        (tmp_path / f.name.lower()).write_bytes(f.read_bytes())
+
+    assert not (tmp_path / "HD2022.csv").exists() or os.listdir(tmp_path) == [
+        n.lower() for n in os.listdir(tmp_path)]
+
+    data_dir(tmp_path)
+    df = data.build_dataset()          # config.FILES still says HD2022.csv
+    assert len(df) == 8
