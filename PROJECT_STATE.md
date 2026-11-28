@@ -32,7 +32,7 @@ owning doc when a fact changes.
 | Tests | ✅ 88 tests, in CI | Scoring, the flag split, net-price coalescing, COA basis, rate scales, weights, merit policy, the year on the row, verdict expiry — plus (Phase 6) the real `data.py` read path against a synthetic fixture dataset, all five endpoints via `TestClient`, and a smoke test that boots uvicorn. `ruff` + `pytest` + smoke run on every push. |
 | **Real data** | ✅ **Installed & validated** | Real IPEDS 2022-23: 1,907 colleges (726 public / 1,095 private nonprofit / 86 for-profit). 5 of 5 reference metrics match. |
 | Error handling | ✅ Done | Server: bad params get a 4xx naming them, a missing dataset a 503 naming the file. UI: both fetches distinguish *nothing answered* from *answered and said no*, quote the server's own message, and offer retry; a filter that matches nothing says so separately. Verified on the live site by scaling the backend to zero. |
-| Deployment | ✅ **Live 2026-11-20**, reviewed 2026-11-27 | `http://136.81.186.158/` — **static IP** (reserved 2026-11-25), digest-pinned images, PDBs, uptime alerting, non-root backend, GKE zonal cluster, 2 Spot e2-medium nodes, 2 replicas per service on separate nodes, data fetched from GCS on pod start. ~$3.50-4.00/day, ~$20 spent in the first five days. HTTP-only by choice — see the deferred decision under Phase 9. Teardown cycle in `DEPLOYMENT.md`; **still running for the demo**. |
+| Deployment | ✅ **Live 2026-11-20**, reviewed 2026-11-27 | **`https://merit-aid-finder.com/`** (TLS added 2026-11-28), with `http://136.81.186.158/` still serving as the certificate-free fallback and no redirect between them. **Static IP** (reserved 2026-11-25), digest-pinned images, PDBs, two uptime checks + alerting, non-root backend, GKE zonal cluster, 2 Spot e2-medium nodes, 2 replicas per service on separate nodes, data fetched from GCS on pod start. **Billed $17.71 for 2026-11-01→27, ≈$2.53/day** — read from Billing → Reports, not modelled; the zonal-cluster credit *is* applying. Teardown cycle in `DEPLOYMENT.md`; **still running for the demo**. |
 
 **One-line summary:** the app runs on real, validated IPEDS data and produces defensible
 rankings — Stanford #1 at $77,662 sticker against a $7,332 net price for a mid-income
@@ -627,13 +627,105 @@ Two things remain open here and are fine to leave: the `pull_request` trigger ha
 still never fired, because no pull request has ever existed on this repo, and the
 frontend has no tests beyond the build.
 
-### Phase 7 — Upgrade to IPEDS 2023-24 ⏸️ *unblocked, deferred by choice*
+### Phase 7 — Upgrade to IPEDS 2023-24 🔬 *built and validated 2026-11-27, not adopted — Hasan's decision 2026-11-28*
 
-**Not blocked.** It was gated on Phase 2 (install and validate the real dataset),
-which closed on 2026-10-28. Nothing stands in the way of doing it; it is simply not
-worth doing before the demo, because it would re-open every number the app displays
-and re-validate every figure in these docs for a one-year-newer dataset that changes
-no conclusion. Full plan in §6 below.
+**Closed, not abandoned.** The upgrade was written, run against the real 2023-24
+release, and validated green on branch `phase7-ipeds-2023-24`. Hasan then decided the
+app stays on 2022-23. Both halves of that are deliberate and the work is kept, because
+what it found is worth more than the newer numbers would have been.
+
+**The branch is retained.** Switching is one environment variable —
+`IPEDS_YEAR=2023-24` — plus installing the six new CSVs in the bucket, because
+`config.FILES_BY_YEAR` holds both releases and `IPEDS_YEAR` selects one. Nothing is
+edited to switch, so this is a decision anyone can revisit without redoing the work.
+
+#### It validated. That is not why it was declined.
+
+| Check | 2022-23 (live) | 2023-24 (branch) |
+|---|---|---|
+| colleges in dataset | 1,907 | **1,906** |
+| public / private nonprofit / for-profit | 726 / 1,095 / 86 | 741 / 1,083 / 82 |
+| net price min-max | $2,200-$63,997 | $2,650-$63,333 |
+| SAT coverage | 985 | 963 |
+| median aid share | 0.2942 | **0.2932** |
+| median MGI | 0.5798 | **0.5836** |
+| **COA identity** max \|COA − (net + grant)\| | $0.00 over 1,907 | **$0.00 over 1,906** |
+| **negative discount** (the 24%-of-dataset defect) | 0 | **0** |
+| net-price pair both populated | 0 | **0** |
+| grant pair both populated | 0 | **0** |
+| merit_policy institutions present | 24/24 | **24/24** |
+
+Validation targets were rebuilt rather than reused: 1907 / 2200 / 63997 / 985 are
+2022-23 facts and do not reproduce, which is not a regression. The invariants are what
+had to hold, and every one of them does.
+
+#### Why it was declined: the ranking moves for a reason that is not college value
+
+The Value Score is one third graduation rate, and `GBA4RTT` in `DRVGR2023` is the
+**2017 bachelor's subcohort** — a cohort whose four-year completion window ends in
+**2020-21, the pandemic year**, when leaves of absence at selective colleges were
+common. The effect is concentrated in exactly the institutions a demo looks at:
+
+- **Stanford 0.730 → 0.580**
+- **Harvard 0.870 → 0.660**
+
+Which is enough to push **Stanford out of the top 10 and put Washington and Lee
+first**. 14 of the top 20 survive; median movement is 94 places out of 1,710 scoreable
+colleges (≈5.5 percentiles).
+
+This is **not a pipeline fault** — the dataset's median 4-year rate is unchanged at
+0.410, so it is tail volatility in a cohort measure, with 322 colleges falling more
+than 5 points and 181 rising more than 5. But a reshuffle at the top driven by a
+pandemic cohort is a story about COVID attendance, not about which colleges give good
+aid, and the app would have had to explain that to every viewer. A clean story on
+known-good numbers beats fresher data whose headline needs a footnote.
+
+#### The finding worth keeping: the variable names lie about their year
+
+The expectation going in was that the new release would rename things. It does the
+opposite — **the names are identical and the meaning moves.** Read from the `SFA2223`
+dictionary's own Description text on 2026-11-27:
+
+| Variable | in `SFA2122` | in `SFA2223` |
+|---|---|---|
+| `NPT442`, `NPIS442` | net price, 2021-22 | net price, **2022-23** |
+| `GRN4A42`, `GIS4A42` | avg grant, 2021-22 | avg grant, **2022-23** |
+| `NPT441`, `GRN4A41` | net price/grant, 2020-21 | net price/grant, **2021-22** |
+
+The trailing digit is an index relative to the file's own survey year, not a fixed year
+code. So the upgrade needs **no column mapping at all** — but anyone doing it by
+pattern-matching the old year onto `...1` would silently serve data a year stale, with
+no error anywhere. `config.SFA_MONEY_YEAR` records which year the money describes per
+release, and a test asserts every release declares one. Both live on the branch.
+
+Also confirmed from the 2023-24 dictionaries, against §6's checklist: `ICLEVEL` 1 is
+still "Four or more years", `HDEGOFR1` is still "Highest degree offered", `GBA4RTT` is
+still the 4-year bachelor's rate on 0-100, `DVADM01` is still "Percent admitted -
+total" on 0-100, and `TUITION2` is still in-state average tuition — so
+`config.RATE_COLUMNS` needs no change.
+
+#### Two loader defects it exposed — these were ported to main
+
+They have nothing to do with which year is loaded. Both are the loader hardcoding an
+assumption about how IPEDS names and encodes files, and both are quiet on 2022-23 only
+by luck, so they were brought to `main` with their tests on 2026-11-28:
+
+- **`HD2023.csv` ships a UTF-8 BOM** (verified: first three bytes `ef bb bf`) and no
+  other file in either release does. Read as latin-1 — which the rest of IPEDS text
+  requires — those bytes become `ï»¿`, so the first column arrives named `ï»¿UNITID`
+  and every join loses its key. The header is stripped on read rather than the encoding
+  changed, because utf-8-sig would then break on the genuinely latin-1 bytes elsewhere.
+- **IPEDS ships inconsistent filename casing.** Verified against the extracted 2023-24
+  zips on 2026-11-28: `HD2023.csv` arrives beside `adm2023.csv` and `sfa2223.csv` in
+  the same download. The 2022-23 archive this repo ships (`merit-aid-data.zip`) is
+  uniformly uppercase, so main's exact-case lookup works on it — but that is
+  normalisation inside the archive, not a guarantee from IPEDS, and the failure mode is
+  a 503 in the Linux container on a path that worked on Windows. `data._resolve()` now
+  matches case-insensitively.
+
+**Done when:** the app serves 2023-24 data with every movement explained. **The
+validation half is met and the explanation exists; adoption was declined on the
+strength of the explanation.**
 
 ### Phase 8 — Deploy to GCP ✅ *live 2026-11-20*
 
@@ -718,14 +810,41 @@ A fifth, smaller one: with required anti-affinity and replicas == nodes, a defau
 rollout deadlocks, because the surge pod has nowhere to be scheduled. Both Deployments
 now set `maxSurge: 0`.
 
-**Cost, from Google's Cloud Billing Catalog API rather than from memory:** the zonal
-cluster management fee is **$0.10/hour** ($73/month) and Spot E2 is $0.012440 per
-vCPU-hour plus $0.001666 per GiB-hour, making two e2-medium nodes $0.038/hour
-($27.90/month). With the load balancer (~$18/month, the one figure not taken from a
-primary source) that is **roughly $3.50-4.00 per day**. No other GKE cluster exists on
-this billing account, so the one-free-zonal-cluster credit ($74.40/month) should apply
-and bring it to roughly $45-50/month — an expectation to confirm against the actual
-bill in 24-48 hours, not a measurement.
+**Cost — superseded by the actual bill on 2026-11-27.** This section used to carry a
+catalog-derived model: $0.10/hour cluster management, $0.038/hour of Spot nodes, ~$18 of
+load balancer, "roughly $3.50-4.00 per day", and a free-tier credit that *should* apply.
+Hasan read **Billing → Reports** grouped by SKU. The model was wrong in both directions
+and the real number is lower: **$17.71 over 2026-11-01 → 11-27**, about **$2.53/day**.
+Full SKU breakdown and attribution in `DEPLOYMENT.md` → Cost. Three things it settled:
+
+- **The zonal-cluster credit is applying — the open question is closed.** No
+  cluster-management SKU appears at all. The arithmetic is decisive rather than
+  suggestive: at $0.100/hour over the cluster's ~170 hours that line alone would be
+  about $17, which would have doubled a $17.71 total. The $73/month figure that
+  dominated every estimate in this file is **$0**.
+- **The static IP does not bill while attached — also closed.** No "Static Ip Charge"
+  line exists. This file and `DEPLOYMENT.md` both carried it as "up to $7.30/month"
+  because the catalog lists the SKU but not whether an attached address pays it.
+- **Two costs the model omitted entirely.** Node **boot disks** at $4.54 are the single
+  largest line — 2 × 100 GB pd-balanced, GKE's default, never chosen, ~$20/month to hold
+  an image and 20.5 MiB of CSVs. And **managed-Prometheus sample ingestion** at $1.83
+  for 30.4M samples, which is the only line that grows with nothing but time.
+
+  The disk is the biggest saving available anywhere in this deployment — `disk_size_gb`
+  of 32 would cut about $13/month, more than the load balancer costs — and it is
+  **deliberately not done**, because it recreates the node pool and the presentation is
+  days away. Do it after.
+
+  The Prometheus line is **not** the Phase 10 uptime check and alert policy; those are
+  Cloud Monitoring, inside its own free tier. Verified 2026-11-28: the cluster has
+  `managedPrometheusConfig.enabled: true` with eleven component groups on by default,
+  including DCGM (GPU metrics) and JOBSET on a cluster that has neither. The lever is
+  that component list, not the alerting.
+
+Billed spend is readable **only** in the console: there is no BigQuery billing export,
+`bq` is broken on this machine (`python3.14: command not found`), and no gcloud surface
+returns cost. The figures above are Hasan's console reading; what was verified here with
+gcloud is which resource each SKU belongs to.
 
 ### Phase 9 — Finish ✅ *closed 2026-11-25*
 
@@ -759,80 +878,130 @@ bill in 24-48 hours, not a measurement.
       dependencies rather than from having run it. That is stated there as untested,
       and it stays stated until someone runs it.
 
-### HTTPS: analysed 2026-11-27, awaiting Hasan's decision
+### HTTPS and a custom domain ✅ *decided and shipped 2026-11-28*
 
-Hasan wants HTTPS only if it adds no real cost or risk. It adds a little of both, and
-the numbers below are measured rather than recalled.
+**Hasan bought the domain.** `merit-aid-finder.com` is registered through Cloud Domains
+in this project, ACTIVE, DNSSEC on, renewing 2027-11-27, **$12.00/year**. That closes the
+deferred decision this section used to record. The site now serves TLS on the name and
+**still serves plain HTTP on `http://136.81.186.158/`**, which is the point: the
+certificate-free path is the demo's guaranteed fallback and was never taken away.
 
-**A certificate cannot be issued to the IP.** Not an opinion — Google rejects it:
+#### What the pre-work got right and wrong
+
+The 2026-11-27 analysis is kept below in condensed form because the costs it predicted
+are now checkable:
+
+| Predicted | Actual |
+|---|---|
+| A certificate cannot be issued to a bare IP | **Confirmed.** `gcloud compute ssl-certificates create --domains=136.81.186.158` → `ERROR: Invalid value ... Invalid domain name specified.` |
+| Domain ≈ $12/year | **$12.00/year**, `merit-aid-finder.com` |
+| GKE `ManagedCertificate` is free (no SKU in the catalog) | no SKU appeared and no certificate charge has billed; **still to confirm** against a full day of billing detail |
+| Second (HTTPS) forwarding rule: $0 expected, $7.30/month worst case | **two global forwarding rules now exist** (`80-80` and `443-443` on the same IP). Open until billing detail covers a full day — see below. |
+| The real risk is issuance *time*, not money | **Correct, and it was the only thing that took any time.** |
+
+The forwarding-rule reasoning, for the record: the load balancer bills a flat *minimum*
+covering a set of rules ("Forwarding Rule **Minimum** Global", $0.025/hr) plus an
+*additional* per-rule charge beyond it ("**Additional** Global", $0.010/hr). The rate is
+verified from the Cloud Billing Catalog API; the included count is documented as five but
+is **not published in the catalog**, which is why the worst case was stated at all.
+Billing now has the data to settle it — the SKU line to watch is
+"LB Forwarding Rule Minimum Global", which was $4.07 for the HTTP-only week.
+
+#### Issuance took 8 minutes, and the status field lagged it by 4 more
+
+Applied at 07:29:19 UTC. `https://merit-aid-finder.com/api/health` returned **200 at
+t+490s (8m10s)**; `gcloud compute ssl-certificates list` reported ACTIVE at t+545s; and
+`kubectl get managedcertificate` did not stop saying `Provisioning` until **t+737s
+(12m17s)** — **247 seconds, 4m07s, after the site was already serving real traffic over
+TLS**.
+
+That is a vindication of verifying with a request rather than a resource field, and it
+is the second time in two phases that a status signal has been wrong in this project —
+the first was the uptime check that stayed green on a mangled path because nginx's SPA
+catch-all returns 200 for anything outside `/api/`. **A green field is not a working
+system.** The certificate on the wire, read with Python's `ssl` module:
 
 ```
-$ gcloud compute ssl-certificates create test-ip-cert --domains=136.81.186.158 --global
-ERROR: Invalid value for field 'resource.managed.domains[0]': '136.81.186.158'.
-       Invalid domain name specified.
+TLSv1.3 / TLS_AES_256_GCM_SHA384
+subject CN=merit-aid-finder.com   issuer Google Trust Services CN=WR3
+SAN ['merit-aid-finder.com']      notAfter Jan 12 07:29:20 2027 GMT (45 days, auto-renewed)
 ```
 
-So HTTPS requires buying a domain. **That is the only real cost, and it is Hasan's
-call, not mine. Nothing has been purchased.**
+**The pre-work's 15–60 minute warning was right to exist and did not bind.** Issuance is
+gated on the name resolving publicly, which is why the A record was confirmed against
+`8.8.8.8` *before* the certificate was requested rather than after.
 
-| Item | Cost | Source |
-|---|---|---|
-| `meritaidfinder.com` | **$12.00/year**, AVAILABLE | `gcloud domains registrations search-domains` |
-| `meritaid.app` | $14.00/year, AVAILABLE | same |
-| Google-managed certificate (classic, what a GKE `ManagedCertificate` uses) | **no SKU in the price list** → free | Cloud Billing Catalog API, Certificate Manager + Networking services |
-| Certificate Manager (a *different*, newer product) | $0.10 / certificate / month | Catalog API, SKU "Certificates usage" |
-| Second (HTTPS) forwarding rule on the existing load balancer | **$0, almost certainly** | Catalog API: "Cloud Load Balancer Forwarding Rule **Minimum** Global" $0.025/hr, "Forwarding Rule **Additional** Global" $0.010/hr |
+#### Chrome's HTTPS upgrade now lands on the site instead of an error page
 
-On that last line, precisely: the load balancer is billed as a flat *minimum* that
-covers a set of forwarding rules, plus an *additional* per-rule charge beyond it.
-There is one rule today and HTTPS would make two, which is inside the documented
-included count of five — so the expected marginal cost is **$0/month**, and the
-worst case if the included count were one is **$7.30/month**. The rate is verified;
-the threshold is not, because the catalog does not publish it.
+The failure recorded on 2026-11-25 was re-run against the domain on 2026-11-28 with
+Chrome's HTTPS-upgrade behaviour left at its **default** (the earlier capture needed
+`--disable-features=HttpsUpgrades` to see the page at all). Navigating to
+`http://merit-aid-finder.com/`:
 
-**The real risk is time, not money.** A managed certificate only begins issuing once
-DNS resolves to the load balancer, and issuance has historically taken 15–60 minutes
-and occasionally far longer. Days before a presentation, that is the exposure.
+```
+[diag] {"url":"https://merit-aid-finder.com/",
+        "title":"Merit Aid Finder — Hidden College Deals","len":9609}
+```
 
-**What breaks if the certificate is not ready on the day:** nothing, if it is done the
-way below. HTTP stays serving throughout — a GKE Ingress keeps its HTTP forwarding
-rule unless `kubernetes.io/ingress.allow-http: "false"` is set, so the plan is to add
-HTTPS *alongside* and leave the existing `http://136.81.186.158/` path untouched. A
-certificate stuck in `PROVISIONING` means `https://` does not work yet; it does not
-affect `http://`. A redirect would only be considered after the certificate reports
-`ACTIVE`.
+Chrome upgraded the scheme itself and rendered the real app — 9,609 characters of visible
+text, the filter panel, and "across all 1,907 colleges". On the bare IP the same default
+produced `chrome-error://chromewebdata/`. **Fixed, and verified the same way it was
+originally found.**
 
-**The static IP is already reserved and Terraform-managed**, so it is a valid A-record
-target. That part is done.
+#### A second uptime check, because the first is blind to all of this
 
-**If Hasan declines**, the consequence stays as recorded below, now with one
-measured addition: browsers do not merely warn, they can fail outright.
+`merit-aid-health` watches `http://136.81.186.158/api/health` — it cannot notice a
+deleted A record or a certificate that fails to renew. `merit-aid-https` was added
+2026-11-28 on `https://merit-aid-finder.com/api/health`.
 
-### Deferred decision: no custom domain, so the site is HTTP-only
+**It was inert when first created.** `--validate-ssl` defaults to **false**, so the check
+reported healthy over HTTPS without validating the certificate — the single failure mode
+it was added for would not have tripped it. Caught by reading the stored config back
+instead of trusting the create, and fixed with
+`gcloud monitoring uptime update <ID> --validate-ssl=true`. That is exactly the
+"visible but inert" error this project treats as a bug, caught on the same day it was
+introduced.
 
-*Recorded 2026-11-25 so this reads as a choice and not an oversight.* Hasan decided
-against a custom domain for now. A domain adds DNS propagation and certificate
-provisioning as new failure modes within days of a demo, and it complicates teardown
-by leaving a registration and DNS records behind after the cluster is gone.
+Also re-measured: the nginx catch-all still applies over TLS —
+`https://merit-aid-finder.com/api/nope` → 404 while `/not-an-api-path` → 200 — so the
+check's path still has to sit under `/api/` to discriminate at all.
 
-The consequences, which are real and worth stating plainly:
+#### Apex first, `www` second — deliberately, not an omission
 
-- **The site is HTTP-only and browsers mark it "Not secure".** There is no way around
-  that on a bare IP: a Google-managed certificate requires a domain name, because
-  certificates are issued to names and not to addresses.
-- **Chrome actively tries HTTPS first.** Observed while capturing the live page on
-  2026-11-25: headless Chrome upgraded `http://136.81.186.158/` to `https://`, found
-  no certificate, and landed on `chrome-error://chromewebdata/` rather than the site.
-  The capture needed `--disable-features=HttpsUpgrades`. Anyone sharing the link
-  should write `http://` explicitly and expect some browsers to need a click-through.
-- **Nothing sensitive crosses the wire.** The app takes no credentials and no personal
-  data; it reads public IPEDS figures and sends filter values. The exposure from plain
-  HTTP here is a trust signal, not a data risk.
+A Google-managed certificate does not go ACTIVE until **every** name on it validates by
+DNS lookup. `www.merit-aid-finder.com` had no record of any kind (verified 2026-11-28:
+`nslookup www.merit-aid-finder.com 8.8.8.8` → **NXDOMAIN**), so listing it on the
+certificate would have held the apex's TLS hostage to a name that could not validate.
+One name is one way to fail instead of two, and issuance time was the only real risk to
+the presentation. **`www` still does not resolve and is not claimed to.**
 
-Reversible in about 20 minutes of work plus certificate provisioning whenever a
-domain is wanted: point an A record at `136.81.186.158` — which is static now, so it
-is a valid DNS target — then attach a `ManagedCertificate` to the Ingress. See the
-HTTPS analysis above for what that costs and what it risks.
+#### No redirect, on purpose
+
+There is no HTTP→HTTPS redirect. A redirect routes the guaranteed fallback through the
+newest and least-proven component in the stack. `kubernetes.io/ingress.allow-http` is
+pinned to `"true"` on the Ingress — the default already, but pinned so that removing
+port 80 has to be a deliberate act. A `FrontendConfig` with `redirectToHttps` is the
+mechanism if it is ever wanted, and not before the certificate has a track record.
+
+#### The browser consequence that made this worth doing
+
+Recorded on 2026-11-25 and the strongest argument for the domain: headless Chrome
+upgraded `http://136.81.186.158/` to `https://`, found no certificate, and landed on
+`chrome-error://chromewebdata/` rather than the site. The capture needed
+`--disable-features=HttpsUpgrades` to work at all. Browsers do not merely warn about
+plain HTTP — they can fail outright. The README's instruction to "type `http://`
+explicitly" existed because of that.
+
+#### Where each piece lives
+
+The zone is **not** Terraform-managed and that is deliberate: Cloud Domains created it as
+part of the registration, with DNSSEC on and the registrar's nameservers delegated to it,
+so importing it would put `terraform destroy` one command away from deleting the zone
+under a registration paid up to 2027-11-27 that this config cannot re-delegate. The
+**record** is Terraform-managed (`google_dns_record_set.apex`) and reads
+`google_compute_global_address.ingress.address` rather than a literal IP, so the name and
+the address are one fact and cannot drift. Full procedure and gotchas in `DEPLOYMENT.md`
+→ *Domain + HTTPS*.
 
 ### Phase 10 — Production review ✅ *2026-11-27*
 
@@ -984,7 +1153,13 @@ rather than by reading the manifest back.
 
 ---
 
-## 6. The IPEDS 2023-24 upgrade plan
+## 6. The IPEDS 2023-24 upgrade plan — *executed 2026-11-27; adoption declined*
+
+> **This plan was carried out.** It ran on branch `phase7-ipeds-2023-24`, validated
+> green, and Hasan declined to adopt the new year on 2026-11-28. Outcome, figures and
+> reason are under **Phase 7** above; this section is kept for the reasoning that still
+> holds and is annotated where the work proved it wrong.
+
 
 ### Why 2023-24 and not newer
 
@@ -1024,21 +1199,39 @@ one year → `SFA2122`). **Verify against the Data Center before relying on this
 | `ADM2022.csv` | `ADM2023.csv` |
 | `DRVADM2022.csv` | `DRVADM2023.csv` |
 | `DRVGR2022.csv` | `DRVGR2023.csv` |
-| `IC2022Mission.csv` | `IC2023Mission.csv` |
 
-Note SFA always lags the charges data by a year — that's IPEDS, not a bug in the app.
+~~`IC2022Mission.csv` → `IC2023Mission.csv`~~ — there is no mission file in either year;
+the feature it fed was deleted in Phase 3.5 because its only content was generated text.
+Six files, not seven.
+
+**Confirmed 2026-11-27**: all six names above are correct and every file and dictionary
+exists at the IPEDS Data Center. SFA does still lag the charges data by a year — tuition
+in `IC2023_AY` is 2023-24 while the money in `SFA2223` is 2022-23. One thing the mapping
+does not capture: **IPEDS ships these with inconsistent casing.** Verified against the
+extracted zips on 2026-11-28 — `HD2023.csv` arrives beside `adm2023.csv`,
+`drvadm2023.csv`, `drvgr2023.csv`, `ic2023_ay.csv` and `sfa2223.csv`.
 
 ### Steps
 
-1. **Diff the dictionaries first.** Download both years' Excel dictionaries and compare
-   the columns the app reads: `IGRNT_A`, `NPT442`, `TUITION2`, `CHG4AY3`, `CHG5AY3`,
-   `CHG6AY3`, `CHG7AY3`, `SATVR75`, `SATMT75`, `DVADM01`, `GBA4RTT`, `ICLEVEL`,
-   `HDEGOFR1`, `CONTROL`. Report any rename, redefinition or unit change **before**
-   touching code.
+1. ~~**Diff the dictionaries first.**~~ **Done 2026-11-27, and it found the one real
+   trap.** The `CHG*AY3` charge columns are no longer read at all — Phase 3 replaced the
+   hand-summed sticker price with the identity IPEDS nets against — so the list that
+   matters is `IGRNT_A`, `NPT442`/`NPIS442`, `GRN4A42`/`GIS4A42`, `TUITION2`, `SATVR75`,
+   `SATMT75`, `DVADM01`, `GBA4RTT`, `ICLEVEL`, `HDEGOFR1`, `CONTROL`.
+
+   Nothing was renamed. `ICLEVEL` 1 is still "Four or more years", `HDEGOFR1` is still
+   "Highest degree offered", `GBA4RTT` is still the 4-year bachelor's rate on 0-100,
+   `DVADM01` is still "Percent admitted - total" on 0-100, `TUITION2` is still in-state
+   average tuition — so `config.RATE_COLUMNS` needs no change. **What changed is what the
+   names mean**: the trailing digit is an index relative to the file's own survey year,
+   so `NPT442` is 2021-22 in `SFA2122` and 2022-23 in `SFA2223`. See Phase 7 above.
 2. **Download** the 2023-24 complete data files (CSV, final release).
-3. **Update the filenames** — 8 strings in [`config.py:25-32`](backend/app/config.py#L25-L32)
-   and the matching 8 in [`scripts/make_sample_data.py`](backend/scripts/make_sample_data.py),
-   so the sample generator keeps producing files the loader can find.
+3. ~~**Update the filenames**~~ — **done differently.** Editing strings would have made
+   the year a thing you change rather than a thing you select, and the two releases could
+   then never be compared. On the branch, `config.FILES_BY_YEAR` holds both releases and
+   `IPEDS_YEAR` picks one, so switching is one environment variable and nothing is edited.
+   `make_sample_data.py` deliberately still generates 2022-23 names: the sample data
+   exists to run the app without the real files, not to imitate a release.
 4. **Update display copy** — the "IPEDS 2022-23" strings in `frontend/src/App.jsx`,
    `PROJECT_BRIEF.md` and `ANALYSIS.md`.
 5. **Run `pytest`.** Fixtures are in-memory and year-agnostic, so a failure here means
@@ -1050,11 +1243,31 @@ Note SFA always lags the charges data by a year — that's IPEDS, not a bug in t
 8. **Commit on its own branch**, separate from any code change, so the ranking movement
    is attributable to the data alone.
 
-### Set expectations on one metric
+### Set expectations on one metric — ⚠️ *this prediction was wrong*
 
-`GBA4RTT` is a **4-year** graduation rate, so it describes a cohort that enrolled four
-or more years before collection. It is structurally backward-looking whichever release
-you use. Fresher data meaningfully improves prices and aid; it barely moves grad rates.
+The plan said: `GBA4RTT` is a **4-year** graduation rate describing a cohort that
+enrolled four or more years before collection, structurally backward-looking whichever
+release you use, so "fresher data meaningfully improves prices and aid; it barely moves
+grad rates."
+
+**The measurement contradicts the last clause, and per CLAUDE.md §1 the check wins.**
+Graduation rate was by far the *noisiest* component between these two releases, and it
+is the sole cause of the ranking reshuffle:
+
+| Component | median change, colleges in both years |
+|---|---|
+| 4-year graduation rate | **0.0000** — but **322 colleges fell >5 points** and 181 rose >5 |
+| net price | +$292 |
+| average institutional grant | +$433 |
+| aid share | +0.0038 |
+| admissions rate | 0.0000 |
+
+The median is unchanged, which is what "barely moves" was reasoning about; the *tails*
+move hard. `DRVGR2023`'s `GBA4RTT` is the **2017 subcohort**, whose four-year window
+closes in 2020-21 — the pandemic year. Stanford reads 0.730 → 0.580 and Harvard
+0.870 → 0.660. A metric can be backward-looking *and* volatile, and a median is the
+wrong statistic for noticing it. Checking the distribution rather than the centre is the
+lesson worth carrying forward.
 
 ### Rollback
 
@@ -1062,7 +1275,10 @@ Keep the 2022-23 CSVs in a separate local folder (not the repo — they're gitig
 Reverting is: restore those files and revert the filename commit.
 
 **Done when:** the app serves 2023-24 data, `/api/meta` movements are all explained, and
-`pytest` is green.
+`pytest` is green. **Two of the three were met** — every movement is explained and the
+suite is green on the branch — and the third was declined on the strength of the
+explanation. The branch stays; switching is `IPEDS_YEAR=2023-24` plus the six new CSVs
+in the bucket.
 
 ---
 

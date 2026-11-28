@@ -167,9 +167,30 @@ key material appears anywhere in the manifests.
 ## Monitoring
 
 ```bash
-gcloud monitoring uptime list-configs          # merit-aid-health -> /api/health, 5 min
+gcloud monitoring uptime list-configs          # two checks, both -> /api/health, 5 min
 gcloud alpha monitoring policies list          # "merit-aid: site not answering"
 ```
+
+| Check | Target | Covers |
+|---|---|---|
+| `merit-aid-health` | `http://136.81.186.158/api/health` | the pods, the NEGs, the HTTP forwarding rule |
+| `merit-aid-https` | `https://merit-aid-finder.com/api/health`, **validate-ssl on** | all of the above *plus* DNS resolution and the certificate |
+
+The second was added on 2026-11-28 with TLS, because the first is **structurally blind**
+to everything the domain introduced: delete the A record or let the certificate fail to
+renew and the IP check stays green while nobody can reach the site by name.
+
+> **`--validate-ssl` defaults to false, which would have made that check pointless.**
+> As first created it reported healthy over HTTPS without checking the certificate at
+> all — so the one failure mode it was added for, an expired or invalid certificate,
+> would not have tripped it. Caught by reading the stored config back rather than
+> trusting the create:
+> ```
+> DISPLAY_NAME      HOST                  PATH         USE_SSL  VALIDATE_SSL
+> merit-aid-https   merit-aid-finder.com  /api/health  True     (empty)
+> ```
+> Fixed with `gcloud monitoring uptime update <ID> --validate-ssl=true`. Note the
+> `=true`: the bare `--validate-ssl` flag is rejected.
 
 An incident opens when the check fails for five minutes, and the policy carries its own
 runbook: check `kubectl get pods -o wide` first (a Spot preemption recreates the node,
@@ -188,6 +209,23 @@ seconds on 2026-11-27.
 > /api/health      HTTP 200       /not-an-api-path   HTTP 200
 > /api/nope        HTTP 404       /C:/anything       HTTP 200
 > ```
+> **Still true over HTTPS** — re-measured on the domain 2026-11-28:
+> `https://merit-aid-finder.com/api/nope` → 404 but `/not-an-api-path` → 200. Adding
+> TLS changed nothing about which paths discriminate.
+
+Recreating the HTTPS check from scratch, if it is ever lost — **run this from PowerShell,
+not Git Bash.** MSYS rewrites a leading-slash argument into a Windows path, which is how
+the first check ended up watching `/C:/Program Files/Git/api/health`:
+
+```powershell
+gcloud monitoring uptime create "merit-aid-https" --resource-type=uptime-url `
+  --resource-labels="host=merit-aid-finder.com,project_id=merit-aid-app" `
+  --path="/api/health" --port=443 --protocol=https --period=5 --timeout=10
+gcloud monitoring uptime update <ID> --validate-ssl=true
+```
+
+Quote the whole `--resource-labels` string. Unquoted, PowerShell splits it and gcloud
+rejects it with "uptime_url check has malformed host".
 
 **No human is notified yet.** The policy's only channel is a Pub/Sub topic used to prove
 delivery. Add an email channel:
@@ -225,33 +263,81 @@ serving 1,907 colleges, which it can only do by re-fetching from the bucket.
 
 ## Cost
 
-**What is billed, at list price** (SKU figures read from Google's Cloud Billing Catalog
-API on 2026-11-20, not from a blog post):
+**These are the billed figures, not a price-list estimate.** Hasan read
+**Billing → Reports** for project `merit-aid-app`, grouped by SKU, on 2026-11-27. The
+earlier version of this section was a catalog-derived model; it was wrong in both
+directions and the real total is lower. What follows replaces it.
 
-| Item | SKU price | Per day | Per month (730h) |
-|---|---|---|---|
-| Zonal GKE cluster management fee | $0.100000 / hour | $2.40 | $73.00 |
-| 2 × e2-medium Spot nodes | $0.012440 / vCPU-hr + $0.001666 / GiB-hr → $0.019104/node-hr | $0.92 | $27.90 |
-| External Application Load Balancer | $0.025000 / hour ("Forwarding Rule Minimum Global", SKU-verified 2026-11-27) | $0.60 | $18.25 |
-| Static external IP | $0.010000 / hour (base "Static Ip Charge" SKU) | up to $0.24 | up to $7.30 |
-| Monitoring (1 uptime check, 1 policy, Pub/Sub) | within free tiers | $0.00 | ~$0.00 |
-| GCS storage (20.5 MiB) + Artifact Registry (~1 GB) | negligible | <$0.01 | ~$0.15 |
+**Actual: $17.71 for 2026-11-01 → 11-27.** The cluster has existed since 2026-11-20,
+so that is about 7 days — roughly **$2.53/day, ~$76/month** at this shape.
 
-**Roughly $3.50–4.00 a day, $100–120 a month**, which is at the top of the original
-$70–100 estimate. Every line is now taken from Google's own price list except one: the
-static-IP SKU exists at $0.010/hour, but Google charges it differently for an address
-attached to a live forwarding rule than for one sitting idle, and the catalog does not
-say which applies. The billing detail settles it.
+| SKU as billed | Cost | What it actually is |
+|---|---|---|
+| Balanced PD Capacity | **$4.54** | the two node **boot disks** — 100 GB pd-balanced each |
+| Spot E2 Instance Core | $4.20 | 2 × e2-medium vCPU |
+| LB Forwarding Rule Minimum Global | $4.07 | the load balancer's one HTTP rule |
+| Spot E2 Instance RAM | $2.25 | 2 × e2-medium memory |
+| Prometheus Samples Ingested | $1.83 | 30,422,607 samples from GKE's managed collection |
+| External IP charge on a Spot VM | $0.82 | the **nodes'** own public IPs, not `merit-aid-ip` |
+| GKE cluster management fee | **absent** | credited to zero — see below |
+| Static Ip Charge | **absent** | does not bill while attached — see below |
 
-Actual accrual at 163 hours of uptime (2026-11-27): **$27.10 at list price**, or about
-$10.76 if the free zonal-cluster credit is applying.
+### Three things the billing detail settled
 
-**The GKE free tier may cancel most of this.** Google gives one zonal cluster per billing
-account a $74.40/month credit. No other GKE cluster exists in any project on this billing
-account (checked across all 11 projects on 2026-11-20), so this cluster should be the one
-that gets it — which would leave roughly $45–50/month. That is an expectation, not a
-measurement: confirm it against the actual bill after 24–48 hours, in
-**Billing → Reports**, filtered to project `merit-aid-app`.
+**1. The zonal-cluster credit is applying. The open question is closed.** No
+cluster-management SKU appears in the report at all. That is not a subtle inference: the
+fee is $0.100/hour, the cluster has existed for roughly 170 hours, so it would be about
+**$17 on its own** — which would have made the total around $35, not $17.71. The
+$73/month line that dominated every previous estimate in this file is $0. The report also
+shows **−$18.81 in savings**, the right magnitude for that credit; it is not decomposed
+per SKU, so treat the *absence of the SKU* as the proof and the savings figure as
+corroboration.
+
+**2. The static IP does not bill while it is attached.** No "Static Ip Charge" line
+exists. The catalog lists the SKU at $0.010/hour but does not say whether an address
+serving a live forwarding rule is charged, and this file previously carried it as "up to
+$7.30/month" for that reason. It is $0. The caveat in *Tearing it down* still stands,
+because an address that is **reserved and idle** is the case that does bill.
+
+**3. The $0.82 external-IP line is the nodes, not the site's address.** Verified
+2026-11-28: `gcloud compute instances list` shows both nodes holding public addresses
+(e.g. 35.254.57.66). Nothing needs them — traffic reaches the pods through the load
+balancer's NEGs — so they are a cost and an exposed surface for no benefit. Removing them
+means private nodes, which recreates the node pool.
+
+### Two costs every earlier version of this table omitted
+
+**Node boot disks are the single largest line, at $4.54.** Verified 2026-11-28:
+`gcloud compute disks list` shows **2 × 100 GB pd-balanced**, which is GKE's default and
+was never chosen. At roughly $0.10/GiB-month that is about **$20/month for 200 GB** to
+hold a container image and 20.5 MiB of CSVs. Dropping `disk_size_gb` to 32 would cut
+around $13/month — **the biggest saving available in this deployment, bigger than the
+load balancer.** It is not done, because changing it recreates the node pool, and that
+is not a thing to do in the week before a presentation. Do it after.
+
+**Managed Prometheus bills per sample ingested: $1.83 for 30.4M samples.** This one is
+worth watching because it is the only line that grows on its own. But it is **not** the
+uptime check and alert policy added in Phase 10 — those are Cloud Monitoring, under its
+own free tier. Verified 2026-11-28, the source is the cluster's own metric collection:
+
+```
+monitoringConfig.managedPrometheusConfig.enabled: true
+enableComponents: SYSTEM_COMPONENTS, STORAGE, HPA, POD, DAEMONSET, DEPLOYMENT,
+                  STATEFULSET, CADVISOR, KUBELET, DCGM, JOBSET
+```
+
+Eleven component groups, all on by default — including **DCGM** (GPU metrics) and
+**JOBSET** on a cluster that has neither. The sample count scales with pods and with
+elapsed time, so the lever is trimming that component list, not touching the alerting.
+Left alone for now: it is a control-plane mutation for about $7/month, and the alerting
+built on top of this cluster is what the demo relies on noticing a failure.
+
+### Still not verified
+
+Billed spend is readable **only** in the console. There is no billing export to
+BigQuery, `bq` is broken on this machine (`python3.14: command not found`), and no
+gcloud surface returns cost. Every figure above came from Hasan reading the console;
+the attribution of each SKU to a resource is what was verified here with gcloud.
 
 Charges accrue whether or not anybody visits the site.
 
@@ -302,8 +388,22 @@ cluster goes away. Give it a minute or two between the two commands.
 > other, not from having run it: the stack is up for the demo and tearing it down to prove
 > the teardown sequence would have meant rebuilding it afterwards. If `terraform destroy`
 > does hang, the cause is almost always a leftover forwarding rule or target proxy —
-> `gcloud compute forwarding-rules list` and `gcloud compute target-http-proxies list` will
-> show them.
+> `gcloud compute forwarding-rules list`, `gcloud compute target-http-proxies list` and
+> now also `gcloud compute target-https-proxies list` and
+> `gcloud compute ssl-certificates list` will show them. There are **two** forwarding
+> rules since TLS was added (2026-11-28), and `kubectl delete -f deploy/k8s/` is what
+> releases both, along with the Google-managed certificate the `ManagedCertificate`
+> object owns.
+
+**The DNS zone deliberately survives a destroy.** `google_dns_record_set.apex` is
+Terraform-managed, so `terraform destroy` removes the A record — but the zone
+`merit-aid-finder-com` is **not** a Terraform resource. Cloud Domains created it as part
+of registering the domain, turned DNSSEC on, and delegated the registrar's nameservers to
+it. Importing it would put a `terraform destroy` one command away from deleting the zone
+out from under a registration that is paid for until 2027-11-27 and that this config
+cannot re-delegate. After a destroy/apply cycle the record comes back pointing at the
+same static address, because it reads `google_compute_global_address.ingress.address`
+rather than a hardcoded IP.
 
 **Redeploying later** is the same cycle: `terraform apply`, re-upload the CSVs, push the
 images, `kubectl apply -f deploy/k8s/`. About **15–20 minutes**, most of it the cluster.
@@ -345,7 +445,122 @@ images, `kubectl apply -f deploy/k8s/`. About **15–20 minutes**, most of it th
   deprecated. With `ingressClassName` the Ingress is silently ignored: no address, and —
   the tell — no events whatsoever.
 
-## Add a domain + HTTPS later (optional)
+## Domain + HTTPS
 
-Point a domain's A record at the ingress IP, then add a `ManagedCertificate` and attach it
-to the Ingress. Not needed for a demo — the raw load-balancer IP works.
+**Done 2026-11-28.** `merit-aid-finder.com` was registered through Cloud Domains on
+2026-11-27 ($12.00/year, renews 2027-11-27) and now serves the app over TLS. The raw
+`http://136.81.186.158/` path is **still live and still certificate-free**, deliberately:
+it is the demo's guaranteed fallback and needs neither DNS nor a certificate to work.
+
+### What owns what
+
+| Piece | Where it lives | Why there |
+|---|---|---|
+| DNS zone `merit-aid-finder-com` | Cloud Domains created it; **not** in Terraform | part of the registration's lifecycle — DNSSEC on, registrar NS delegated to it. Importing it would put `terraform destroy` one command from deleting the zone under a paid registration this config cannot re-delegate. |
+| Apex `A` record | `google_dns_record_set.apex` in `deploy/terraform/main.tf` | reads `google_compute_global_address.ingress.address`, so the name and the IP are one fact and cannot drift. A console-created record would be a second, silently stale copy. |
+| Certificate | `deploy/k8s/certificate.yaml` (`ManagedCertificate`) | Google renews it; nothing to rotate by hand. |
+| Attachment | `networking.gke.io/managed-certificates` on the Ingress | this annotation is what makes the LB grow an HTTPS target proxy and a 443 forwarding rule. |
+
+### The sequence, and why it is this order
+
+**Apex first, `www` second — not both at once.** A Google-managed certificate does not go
+ACTIVE until *every* name on it validates by DNS lookup. Listing `www` before an A record
+exists for it holds the whole certificate in PROVISIONING indefinitely, and the apex —
+which does resolve — gets no TLS either. One name is one way to fail instead of two.
+
+```bash
+# 1. DNS. The record points at the Terraform-managed address, not a literal IP.
+cd deploy/terraform && terraform plan -out=tfplan-dns && terraform apply tfplan-dns
+
+# 2. Confirm it resolves PUBLICLY before asking for a certificate. Issuance is a DNS
+#    lookup Google performs; a record only the authoritative server knows is not enough.
+nslookup merit-aid-finder.com 8.8.8.8
+
+# 3. Certificate + attachment. HTTP keeps serving the whole time.
+kubectl apply -f deploy/k8s/certificate.yaml
+kubectl apply -f deploy/k8s/ingress.yaml
+
+# 4. Watch it. Do NOT trust the status field alone -- fetch the site.
+kubectl get managedcertificate merit-aid-cert   -o custom-columns='STATUS:.status.certificateStatus,DOMAIN:.status.domainStatus'
+curl -sS -o /dev/null -w '%{http_code}
+' https://merit-aid-finder.com/api/health
+```
+
+**There is deliberately no HTTP→HTTPS redirect.** A redirect would route the guaranteed
+fallback through the component most likely to not be ready. `kubernetes.io/ingress.allow-http`
+is pinned to `"true"` on the Ingress so nobody removes port 80 by accident. If a redirect
+is wanted later it is a `FrontendConfig` with `redirectToHttps`, and only after the
+certificate has been serving long enough to trust.
+
+### What issuance actually took
+
+Measured on 2026-11-28, with the `ManagedCertificate` applied at **07:29:19 UTC** (t0):
+
+| t | Event | Read from |
+|---|---|---|
+| t+0s | `ManagedCertificate` created; LB grows a 443 forwarding rule and HTTPS proxy | `kubectl apply` |
+| **t+490s (8m10s)** | **`https://merit-aid-finder.com/api/health` returns 200** | `curl` |
+| t+545s (9m05s) | Google reports the certificate ACTIVE | `gcloud compute ssl-certificates list` |
+| t+675s (11m15s) | `kubectl get managedcertificate` **still** says `Provisioning` | `kubectl` |
+| t+737s (12m17s) | the Kubernetes CRD finally flips to `Active` | `kubectl` |
+
+**8 minutes, not the 15–60 the pre-work warned about.** The warning was not wrong to
+exist — issuance can take far longer, and the cause is almost always DNS not resolving
+publicly yet — but with the A record already live and verified against `8.8.8.8` before
+the certificate was requested, it was fast.
+
+> **The Kubernetes status field is the last thing to update, and it lied for minutes.**
+> HTTPS served real traffic for **247 seconds — 4m07s** before
+> `kubectl get managedcertificate` stopped reporting `Provisioning`, and Google's own API
+> reported ACTIVE more than three minutes before Kubernetes did. Anything that waits on the CRD status
+> would have reported the site broken while it was working. **Verify with a request, not
+> a status field** — the same lesson as the health check that was green with a mangled
+> path.
+
+The certificate as served (read off the wire with Python's `ssl`, not from the resource):
+
+```
+TLS version : TLSv1.3        cipher : TLS_AES_256_GCM_SHA384
+subject     : CN=merit-aid-finder.com
+issuer      : Google Trust Services, CN=WR3
+SAN         : ['merit-aid-finder.com']          <- apex only, as intended
+notBefore   : Nov 28 06:36:06 2026 GMT          <- backdated ~53 min for clock skew
+notAfter    : Jan 12 07:29:20 2027 GMT          <- 45 days; Google auto-renews
+```
+
+`notAfter` is exactly 45 days after t0, so the validity window is anchored to the moment
+the resource was created. Renewal is Google's job and needs no action here — but a failed
+renewal is silent, which is why `merit-aid-https` exists as an uptime check with
+`--validate-ssl=true`.
+
+### Two gotchas worth knowing
+
+- **The certificate is free; a similarly-named product is not.** There is no SKU for a
+  GKE `ManagedCertificate` in the Cloud Billing catalog (checked 2026-11-27).
+  **Certificate Manager** is a different resource type at $0.10/cert/month and is not
+  what this uses.
+- **Renaming the `ManagedCertificate` silently detaches TLS.** The Ingress annotation is
+  a name lookup, and a missing target is not an error on the Ingress. Rename in both
+  files or neither.
+
+### A certificate cannot cover a bare IP
+
+This is why a domain was needed at all, rather than an assumption:
+
+```
+$ gcloud compute ssl-certificates create test-ip-cert --domains=136.81.186.158 --global
+ERROR: Invalid value for field 'resource.managed.domains[0]': '136.81.186.158'.
+       Invalid domain name specified.
+```
+
+### `www` is a separate name and does not exist yet
+
+The registration covers the apex. `www.merit-aid-finder.com` is a subdomain that exists
+only if someone creates a record for it — verified 2026-11-28, `nslookup` against 8.8.8.8
+returns **NXDOMAIN**. To add it once the apex is trusted:
+
+```bash
+# an A record for www -> the same address, in main.tf alongside the apex, then either
+# add "www.merit-aid-finder.com" to certificate.yaml's domains list (one cert, two
+# names, both must validate) or leave it HTTP-only until it does.
+```

@@ -29,6 +29,18 @@ metadata:
     # global one (see the google_compute_global_address in deploy/terraform/main.tf).
     # The name here must match that resource's name.
     kubernetes.io/ingress.global-static-ip-name: merit-aid-ip
+    # TLS for merit-aid-finder.com. The certificate itself is a ManagedCertificate
+    # resource (deploy/k8s/certificate.yaml); this annotation is what makes the load
+    # balancer grow an HTTPS target proxy and a second forwarding rule for it.
+    networking.gke.io/managed-certificates: merit-aid-cert
+    # HTTP stays on, explicitly. The default is already true, but leaving it implicit
+    # means one `allow-http: "false"` away from deleting the only path that is proven
+    # to work -- and the demo's guaranteed fallback is http://136.81.186.158, which
+    # needs no certificate and no DNS. There is deliberately no HTTP-to-HTTPS
+    # redirect: a redirect would route the fallback through the thing most likely to
+    # not be ready. Add one (a FrontendConfig with redirectToHttps) only after the
+    # certificate has been serving for long enough to trust.
+    kubernetes.io/ingress.allow-http: "true"
 spec:
   rules:
     - http:

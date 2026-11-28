@@ -1,0 +1,24 @@
+# Google-managed TLS certificate for the apex name, attached to the Ingress in
+# ingress.yaml via the `networking.gke.io/managed-certificates` annotation.
+#
+# APEX ONLY, deliberately. A Google-managed certificate does not go ACTIVE until
+# EVERY name on it validates, and validation is a DNS lookup Google performs
+# against each one. Listing `www.merit-aid-finder.com` here before an A record
+# exists for it would hold the whole certificate in PROVISIONING indefinitely --
+# and the apex, which does resolve, would get no TLS either. One name is one way
+# to fail instead of two; www is a second step once this one serves.
+#
+# This is free: there is no SKU for a GKE ManagedCertificate in the Cloud Billing
+# catalog (checked 2026-11-27). The separately-billed product is Certificate
+# Manager at $0.10/cert/month, which is a different resource type and is not this.
+#
+# Lifecycle note: the certificate's name is referenced from the Ingress annotation.
+# Renaming it here without renaming it there silently detaches TLS, because the
+# annotation is a name lookup and a missing target is not an error on the Ingress.
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: merit-aid-cert
+spec:
+  domains:
+    - merit-aid-finder.com

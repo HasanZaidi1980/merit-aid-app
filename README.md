@@ -2,9 +2,14 @@
 
 [![CI](https://github.com/HasanZaidi1980/merit-aid-app/actions/workflows/ci.yml/badge.svg)](https://github.com/HasanZaidi1980/merit-aid-app/actions/workflows/ci.yml)
 
-**Live: http://136.81.186.158/** — running on GKE. Type `http://` explicitly: there is
-no certificate on a bare IP, so browsers that try HTTPS first will fail rather than fall
-back (see `PROJECT_STATE.md`, "no custom domain").
+**Live: https://merit-aid-finder.com/** — running on GKE, with a Google-managed TLS
+certificate *(2026-11-28)*.
+
+`http://136.81.186.158/` still works and is the fallback if DNS or TLS ever misbehaves;
+it has no certificate, so type `http://` explicitly on that one — browsers that try HTTPS
+first will fail on a bare IP rather than fall back. There is deliberately no
+HTTP-to-HTTPS redirect, so both paths keep working independently. `www` is **not** set up:
+only the apex resolves.
 
 ## What it does
 

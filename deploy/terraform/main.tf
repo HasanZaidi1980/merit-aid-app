@@ -22,7 +22,8 @@ provider "google" {
 # Enabling an API nothing uses is a surface with no purpose.
 resource "google_project_service" "svc" {
   for_each = toset(["container.googleapis.com", "artifactregistry.googleapis.com",
-                    "compute.googleapis.com", "storage.googleapis.com"])
+                    "compute.googleapis.com", "storage.googleapis.com",
+                    "dns.googleapis.com"])
   service            = each.value
   disable_on_destroy = false
 }
@@ -146,4 +147,26 @@ resource "google_storage_bucket" "data" {
   location                    = var.region
   uniform_bucket_level_access = true
   force_destroy               = true
+}
+
+# --- DNS: the apex A record ------------------------------------------------
+# The zone itself is deliberately NOT a Terraform resource. Cloud Domains created
+# `merit-aid-finder-com` as part of registering the domain on 2026-11-27, turned
+# DNSSEC on, and delegated the registrar's NS records to its four
+# ns-cloud-d{1,2,3,4}.googledomains.com nameservers. That makes the zone part of the
+# registration's lifecycle, not this stack's: importing it would put a
+# `terraform destroy` one command away from deleting the zone out from under a
+# domain that is paid for until 2027-11-27 and cannot be re-delegated by this config.
+# So Terraform owns the record it creates and references the zone by name.
+#
+# rrdatas reads the address resource rather than hardcoding 136.81.186.158. That is
+# the point of putting the record here at all: the IP and the name that resolves to
+# it are now the same fact in one place, so they cannot drift. A console-created A
+# record would be a second, silently stale copy of the IP.
+resource "google_dns_record_set" "apex" {
+  name         = "merit-aid-finder.com."
+  managed_zone = "merit-aid-finder-com"
+  type         = "A"
+  ttl          = 300
+  rrdatas      = [google_compute_global_address.ingress.address]
 }

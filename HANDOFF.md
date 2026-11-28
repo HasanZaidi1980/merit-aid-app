@@ -24,8 +24,14 @@ For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next f
   copied onto each pod at start by an init container. **It is costing roughly
   $3.50-4.00 a day while it runs** — `DEPLOYMENT.md` has the teardown cycle, which is
   `terraform destroy`, never a billing change (five-plus projects share that billing
-  account). It is up deliberately for the demo. HTTP-only by choice — no custom domain,
-  so no certificate is possible on a bare IP; type `http://` explicitly.
+  account). It is up deliberately for the demo.
+- **HTTPS on a real domain** *(2026-11-28)*. `https://merit-aid-finder.com/` serves with
+  a Google-managed certificate; the domain is registered through Cloud Domains at
+  $12.00/year, renewing 2027-11-27. The apex A record is Terraform-managed and reads the
+  static-IP resource, so the name and the address cannot drift. **`http://136.81.186.158/`
+  is untouched and still serving** — there is no redirect, on purpose, so the
+  certificate-free path stays a guaranteed fallback. `www` does not resolve and is not
+  claimed to.
 - **The UI explains its own failures** *(Phase 5, 2026-11-25)*. An unreachable API, an
   API that answers with a reason, and filters that match nothing are three different
   messages now, verified against the live site by scaling the backend to zero.
