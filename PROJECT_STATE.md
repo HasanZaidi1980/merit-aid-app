@@ -1001,6 +1001,16 @@ state          : open
 That reproduces Phase 10's ~300s to within a few seconds. Decoy deleted afterwards; both
 real checks were `pass=81 FAIL=0` throughout, read from the Monitoring REST API.
 
+The whole lifecycle was then measured, and it corrected a prediction made from the
+policy's own configuration. `alertStrategy.autoClose: 1800s` invites the conclusion that
+deleting a failing check leaves the incident open for 30 minutes, because removing the
+metric stream means no passing sample ever clears the condition. **Measured, that is
+wrong:** opened 289s after the check began failing (08:47:15 UTC) and closed **~307s**
+after the cause was removed (08:57:07 UTC). `autoClose` is a ceiling for no-data; the
+condition cleared normally, and both numbers track the 300s `alignmentPeriod` instead.
+The close also notified **twice, 41s apart**, same `incident_id` — so a duplicate
+"resolved" email is expected behaviour here, not a fault.
+
 **Two things could not be verified, and both are stated rather than glossed.** First,
 whether the address needs confirming: `verificationStatus` is **absent** from the email
 channel's API representation — not `VERIFIED`, not `UNVERIFIED`, missing — and gcloud has

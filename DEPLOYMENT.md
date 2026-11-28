@@ -328,6 +328,34 @@ merit-aid-https                 merit-aid-finder.com  pass= 81  FAIL=  0
 `merit-aid-https` passing there is a second result worth keeping: it checks with
 `validate-ssl=true`, so Google's own probers trust the certificate from six locations.
 
+**The full incident lifecycle, measured** (all times UTC, 2026-11-28):
+
+| Event | Time | Delta |
+|---|---|---|
+| decoy check created | 08:42:26 | — |
+| **incident opened** | 08:47:15 | **289s** after the check started failing |
+| decoy deleted | ~08:52:00 | — |
+| **incident closed** | 08:57:07 | **~307s** after the cause was removed |
+| a *second* close notification | 08:57:48 | 41s after the first |
+
+Two things in that table are worth keeping:
+
+- **It closes in about five minutes, not the 30 that `autoClose` suggests.** The policy
+  sets `alertStrategy.autoClose: 1800s`, and the obvious reading — that deleting a check
+  removes the metric stream, so there is no passing sample to clear the condition and the
+  incident must wait out the full 30 minutes — **is wrong, and was measured to be wrong.**
+  `autoClose` is the *ceiling* for a no-data incident; in practice the condition cleared
+  normally once the decoy's series ended, and closing took ~307s. That is close to the
+  289s it took to open, which makes sense: both are governed by the 300s
+  `alignmentPeriod`, not by `autoClose`.
+- **The close notified twice, 41 seconds apart**, with the same `incident_id` and
+  slightly different `ended_at` (1795856227 then 1795856268). So expect a duplicate
+  "resolved" email. An earlier repeat of the *open* notification was also observed while
+  the incident was still open, so this policy is not strictly one-email-per-transition.
+
+If an incident ever does need closing sooner, that is a manual close in the Console —
+there is no gcloud command for it.
+
 > **What this test can and cannot prove.** It proves the policy fired, that the payload
 > identified the right check, and that the email channel was attached to the policy when
 > it fired. It does **not** prove an email reached an inbox — Cloud Monitoring exposes no
