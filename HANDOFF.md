@@ -18,13 +18,17 @@ For Claude Code or Claude Cowork picking this up. Read `PROJECT_BRIEF.md` next f
 - **`python scripts/smoke_test.py`** boots real uvicorn over generated sample data and
   checks the three endpoints a deployment check would call. Touches nothing in
   `backend/data/`.
-- **Live on GCP at `http://136.81.186.158/`** *(2026-11-20; address made static 2026-11-25, so a redeploy keeps it)*. GKE zonal cluster in
-  `us-central1-a`, two Spot `e2-medium` nodes, two replicas of each service on separate
-  nodes, images in Artifact Registry, the six CSVs in `gs://merit-aid-ipeds-2026/` and
-  copied onto each pod at start by an init container. **It is costing roughly
-  $3.50-4.00 a day while it runs** — `DEPLOYMENT.md` has the teardown cycle, which is
-  `terraform destroy`, never a billing change (five-plus projects share that billing
-  account). It is up deliberately for the demo.
+- **Live on GCP** *(2026-11-20; address made static 2026-11-25, so a redeploy keeps it)*.
+  GKE zonal cluster in `us-central1-a`, two Spot `e2-medium` nodes, two replicas of each
+  service on separate nodes, images in Artifact Registry, the six CSVs in
+  `gs://merit-aid-ipeds-2026/` and copied onto each pod at start by an init container.
+  **It billed $17.71 over 2026-11-01→27, about $2.53/day** — read from Billing → Reports
+  on 2026-11-27, which also closed two open questions: the free zonal-cluster credit *is*
+  applying (no cluster-management SKU appears at all) and the static IP does *not* bill
+  while attached. The largest single line is the node boot disks at $4.54 — 2 × 100 GB,
+  GKE's default, never chosen. `DEPLOYMENT.md` → Cost has the full SKU breakdown and the
+  teardown cycle, which is `terraform destroy`, never a billing change (five-plus
+  projects share that billing account). It is up deliberately for the demo.
 - **HTTPS on a real domain** *(2026-11-28)*. `https://merit-aid-finder.com/` serves with
   a Google-managed certificate; the domain is registered through Cloud Domains at
   $12.00/year, renewing 2027-11-27. The apex A record is Terraform-managed and reads the
@@ -119,7 +123,25 @@ split is CDS-sourced across the default top 50 — 50 attempted, 23 resolved; 24
 1,907 dataset-wide — with provenance and an expiry, and a 1,907-institution crawl is
 recommended against (38% end-to-end success on the 26 best-documented institutions;
 an existing third-party archive finds no public CDS for 49% of 3,000 schools).
-Phase 5 (error states, empty state) is the next real change.
+
+**Every phase is now closed.** Phases 5, 6, 8, 9 and 10 are done; **Phase 7 (IPEDS
+2023-24) was built, validated green on branch `phase7-ipeds-2023-24`, and deliberately
+not adopted** — the new `GBA4RTT` is the 2017 subcohort whose four-year window closes in
+the pandemic year, which reshuffles the top of the rankings for a reason unrelated to
+college value. The branch is kept; switching is `IPEDS_YEAR=2023-24` plus the six new
+CSVs in the bucket.
+
+Three things are genuinely outstanding, and none of them is code:
+
+1. **No human is notified when the site breaks** — a human action, deliberately. The
+   alert policy's only channel is a Pub/Sub topic used to prove delivery; adding an
+   email channel means putting an address into cloud config, so the two commands sit in
+   `DEPLOYMENT.md` → Monitoring with a placeholder instead.
+2. **Two measured cost savings are left on the table on purpose**, both because they
+   mutate the cluster: dropping the node boot disks from GKE's default 100 GB (~$13/mo,
+   recreates the node pool) and trimming the eleven managed-Prometheus component groups
+   (~$7/mo, control-plane change). Take them after the presentation, not before.
+3. **Teardown is still unverified**, by choice — the stack is up for the demo.
 
 Recent work: Phase 3 replaced the hand-summed cost of attendance with the basket
 IPEDS itself nets against (459 impossible negative discounts → 0); rate scaling became
